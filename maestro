@@ -1,0 +1,711 @@
+#!/usr/bin/env python3
+import os, sys
+import errno
+import yaml
+import hostlist
+import collections
+import copy
+import argparse
+import etcd3
+import json
+import threading, queue
+import time
+from collections import Mapping, Set, Sequence
+from Communicator import Communicator
+
+class Cluster(object):
+    def emit_value(self, path, value):
+        try:
+            res = client.put(path, str(value))
+        except Exception as e:
+            print("Error {0} setting {1} : {2}".format(str(e), path, str(value)))
+
+    def walk(self, obj, path=''):
+        if isinstance(obj, Mapping):
+            for key in obj:
+                self.walk(obj[key], '{0}/{1}'.format(path, str(key)))
+        elif isinstance(obj, Sequence):
+            if isinstance(obj, (str, bytearray)):
+                self.emit_value(path, obj)
+            else:
+                item = 0
+                for v in obj:
+                    # we want to keys to be returned in numberical order which requires z-fill
+                    self.walk(v, path + '/{0:06}'.format(item))
+                    item += 1
+        elif obj:
+            self.emit_value(path, obj)
+
+    def expand_names(self, name_spec):
+        if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
+            names = []
+            for name in name_spec:
+                names += hostlist.expand_hostlist(name)
+        else:
+            names = hostlist.expand_hostlist(name_spec)
+        return names
+
+    def check_required(self, attr_list, container, container_name):
+        """Verify that each name in attr_list is in the container"""
+        for name in attr_list:
+            if name not in container:
+                raise ValueError("The '{0}' attribute is required in a {1}".
+                                 format(name, container_name))
+
+    def build_hosts(self, config):
+        """Generate a host spec list from YAML config
+
+        Builds a dictionary of host definitions. The 'config' is a
+        list of host specifications. Each host specification contains
+        'name', 'host', and 'port' attributes. All attributes are
+        expanded per the slurm hostlist rules. The length of the
+        expanded name-list, must equal the length of the expanded
+        host-list times the expanded port-list.
+
+        Example:
+
+        names : "nid[0001-0002]-[10001-10002]"
+        hosts : "nid[0001-0002]"
+        ports : "[10001-10002]"
+
+        results in the following host-spec dictionary:
+
+        {
+        "nid0001-10001" : { "host" : "nid0001", "port" : 10001 },
+        "nid0001-10002" : { "host" : "nid0001", "port" : 10002 },
+        "nid0002-10001" : { "host" : "nid0002", "port" : 10001 },
+        "nid0002-10002" : { "host" : "nid0002", "port" : 10002 }
+        }
+
+        """
+        host_dict = {}
+        if 'hosts' not in config:
+            return host_dict
+
+        node_config = config['hosts']
+        for spec in node_config:
+            self.check_required([ 'names', 'hosts', 'ports' ],
+                                spec, "host specification")
+            names = self.expand_names(spec['names'])
+            hosts = self.expand_names(spec['hosts'])
+            ports = self.expand_names(spec['ports'])
+            if 'xprt' in spec:
+                xprt = spec['xprt']
+            else:
+                xprt = 'sock'
+            if 'auth' in spec:
+                auth = spec['auth']
+                self.check_required([ 'name' ],
+                                    auth, "authentication configuration")
+                auth_name = auth['name']
+                if 'config' in auth:
+                    auth_config = auth['config']
+                else:
+                    auth_config = ""
+            else:
+                auth_name = 'none'
+                auth_config = ""
+            # build compute for each host x port
+            for host in hosts:
+                for port in ports:
+                    name = names.pop(0)
+                    h = {
+                        'name' : name,
+                        'addr' : host,
+                        'port' : port,
+                        'xprt' : xprt,
+                        'auth' : { 'name' : auth_name, 'config' : auth_config }
+                    }
+                    host_dict[name] = h
+
+        return host_dict
+
+    def build_aggregators(self, config):
+        aggregators = {}
+        if 'aggregators' not in config:
+            return aggregators
+
+        agg_conf = config['aggregators']
+        for agg_spec in agg_conf:
+            self.check_required([ 'names', 'group', 'hosts' ],
+                                agg_spec, "aggregator specification")
+
+            names = self.expand_names(agg_spec['names'])
+            group = agg_spec['group']
+            if group not in aggregators:
+                aggregators[group] = []
+            hosts = self.expand_names(agg_spec['hosts'])
+            if len(names) != len(hosts):
+                raise ValueError('"aggregators:" The "host" and "name" specifications must '
+                                'expand to the same number of names')
+            for name in names:
+                host = hosts.pop(0)
+                agg = {
+                        'name'  : name,
+                        'host'  : host,
+                        'state' : 'stopped' # 'running', 'error'
+                }
+                aggregators[group].append(agg)
+        return aggregators
+
+    def build_producers(self, config):
+        """
+        Return a dictionary keyed by the group name. Each dictionary
+        entry is a list of producers in that group.
+        """
+        producers = {}
+        prod_spec = config['producers']
+        for prod in prod_spec:
+            self.check_required([ 'names', 'hosts', 'updaters',
+                                'reconnect', 'type', 'group' ],
+                                prod, '"producer" entry')
+            names = self.expand_names(prod['names'])
+            hosts = self.expand_names(prod['hosts'])
+            group = prod['group']
+            if group not in producers:
+                producers[group] = []
+
+            if len(names) != len(hosts):
+                raise ValueError('"producer": The "host" and "name" specifications must '
+                                'expand to the same number of strings')
+            upd_spec = prod['updaters']
+
+            # Expand and generate all the producers
+            typ = prod['type']
+            reconnect = prod['reconnect']
+            for name in names:
+                host = hosts.pop(0)
+                prod = {
+                    'name'      : name,
+                    'host'      : host,
+                    'type'      : typ,
+                    'group'     : group,
+                    'reconnect' : reconnect,
+                    'updaters'  : upd_spec
+                }
+                producers[group].append(prod)
+        return producers
+
+    def build_updaters(self, config):
+        """
+        Return a dictionary keyed by the group name. Each dictionary
+        entry is a list of updaters in that group.
+        """
+        updaters = {}
+        for updtr_spec in config['updaters']:
+            self.check_required([ 'name', 'group', 'interval', 'sets', 'producers' ],
+                                updtr_spec, '"updater" entry')
+            group = updtr_spec['group']
+            if group not in updaters:
+                updaters[group] = {}
+            grp_updaters = updaters[group]
+            updtr_name = updtr_spec['name']
+            if updtr_name in grp_updaters:
+                raise ValueError(f"Duplicate updater name '{updtr_name}''. "
+                            "An updater name must be unique within the group")
+            updtr = {
+                'name'      : updtr_name,
+                'interval'  : updtr_spec['interval'],
+                'group'     : updtr_spec['group'],
+                'sets'      : updtr_spec['sets'],
+                'producers' : updtr_spec['producers']
+            }
+            if 'auto' in updtr_spec and 'push' in updtr_spec:
+                raise ValueError(f"The updater specification: {json.dumps(updtr_spec)} "
+                                "contains both 'push' and 'auto' which are "
+                                "mutually exclusive")
+            if 'auto' in updtr_spec:
+                updtr['auto'] = updtr_spec['auto']
+            if 'push' in updtr_spec:
+                updtr['push'] = updtr_spec['push']
+
+            grp_updaters[updtr_name] = updtr
+        return updaters
+
+    def build_stores(self, config):
+        """
+        Return a dictionary keyed by the group name. Each dictionary
+        entry is a list of stores in that group.
+        """
+        stores = {}
+        if 'stores' not in config:
+            return None
+        for store_spec in config['stores']:
+            self.check_required([ 'name', 'group', 'plugin', 'container', 'schema' ],
+                                store_spec, '"store" entry')
+            group = store_spec['group']
+            if group not in stores:
+                stores[group] = {}
+            grp_stores = stores[group]
+            store_name = store_spec['name']
+            if store_name in grp_stores:
+                raise ValueError(f"Duplicate store name '{store_name}''. "
+                            "A store name must be unique within the group")
+
+            self.check_required([ 'name', 'config'],
+                             store_spec['plugin'],
+                            '"store plugin" entry')
+            grp_stores[store_name] = store_spec
+        return stores
+
+    def build_samplers(self, config):
+        """Generate samplers from YAML config"""
+        return {}
+
+    def __init__(self, client, name, cluster_config):
+        """
+        """
+        self.client = client
+        self.name = name
+        self.hosts = self.build_hosts(cluster_config)
+        self.aggregators = self.build_aggregators(cluster_config)
+        self.producers = self.build_producers(cluster_config)
+        self.updaters = self.build_updaters(cluster_config)
+        self.stores = self.build_stores(cluster_config)
+        self.samplers = self.build_samplers(cluster_config)
+
+    def cvt_time_spec_to_us(self, ts):
+        if type(ts) == int:
+            return ts * 1000000
+        x = ts.find('us')
+        if x > 0:
+            return ts[:x]
+
+        x = ts.find('ms')
+        if x > 0:
+            return int(float(ts[:x]) * 1000)
+
+        x = ts.find('s')
+        if x > 0:
+            return int(float(ts[:x]) * 1000000)
+
+        # assume seconds
+        return int(float(ts) * 1000000)
+
+    def commit(self):
+        pass
+
+    def save_config(self):
+        self.client.delete_prefix('/' + self.name)
+        self.walk(self.hosts, '/' + self.name + '/hosts')
+        self.walk(self.aggregators, '/' + self.name + '/aggregators')
+        self.walk(self.producers, '/' + self.name + '/producers')
+        self.walk(self.updaters, '/' + self.name + '/updaters')
+        self.walk(self.stores, '/' + self.name + '/stores')
+    def config_v4(self):
+        """Read the group configuration from ETCD and generate a version 4 LDMSD configuration"""
+        pass
+
+    def config_v5(self):
+        pass
+
+    def config(self, version=4):
+        if version == 4:
+            return self.config_v4()
+        elif version == 5:
+            return self.config_v5()
+        raise ValueError("Version {0} is not recognized".format(version))
+
+def load_config(client, key_prefix):
+    """
+    Build a configuration dictionary from the k,v
+    in the ETCD store
+    """
+    pfx = key_prefix
+    if pfx[0] != '/':
+        pfx = '/' + key_prefix
+    config = {}
+    kv_config = client.get_prefix(pfx)
+    for v, m in kv_config:
+        path = m.key.decode('utf-8')
+        s = path.split('/')
+        if len(s[0]) == 0:
+            # if path begins with '/' strip 1st value
+            s = s[1:]
+        cfg = config
+        for i in range(0, len(s[:-1])):
+            d = s[i]
+            if d.isdigit():
+                # This is a list entry, append a new dictionary if necessary
+                if len(cfg) <= int(d):
+                    cfg.append({})
+                cfg = cfg[int(d)]
+            else:
+                if d not in cfg:
+                    # look ahead to see if we are adding a dictionary or a list
+                    if s[i+1].isdigit():
+                        cfg[d] = []
+                    else:
+                        cfg[d] = {}
+                cfg = cfg[d]
+        if isinstance(cfg, list):
+            cfg.append(v.decode('utf-8'))
+        else:
+            cfg[s[-1]] = v.decode('utf-8')
+    # json_config = json.dumps(config)
+    return config
+
+def cvt_intrvl_str_to_us(interval_s):
+    """Converts a time interval string to microseconds
+
+    A time-interval string is an integer or float follows by a
+    unit-string. A unit-string is any of the following:
+
+    's'  - seconds
+    'us' - microseconds
+    'm'  - minutes
+
+    Unit strings are not case-sensitive.
+
+    Examples:
+    '1.5s' - 1.5 seconds
+    '1.5S' - 1.5 seconds
+    '2s'   - 2 seconds
+    """
+    interval_s = interval_s.lower()
+    if 'us' in interval_s:
+        factor = 1
+        ival_s = interval_s.replace('us','')
+    if 'ms' in interval_s:
+        factor = 1000
+        ival_s = interval_s.replace('ms','')
+    elif 's' in interval_s:
+        factor = 1000000
+        ival_s = interval_s.replace('s','')
+    elif 'm' in interval_s:
+        factor = 60000000
+        ival_s = interval_s.replace('m','')
+    try:
+        mult = float(ival_s)
+    except:
+        raise ValueError(f"{interval_s} is not a valid time-interval string")
+    return int(mult * factor)
+
+def agg_hosts(grp_name, aggs, hosts):
+    return [ hosts[a['host']] for a in aggs[grp_name] ]
+
+def add_producers(comms, producers, aggregators, agg_state, hosts):
+    """Add producers to Aggregators
+
+    Producers are added to all Aggregators in the group. They
+    are all in the STOPPED state initially. The start_producers
+    function will start producers on the Aggregator to which
+    they have been assigned by the load balancer.
+
+    This should reduce the latency of rebalancing as the
+    producer only needs to be started, not added, configured
+    and started when it assumes control from a failed peer.
+    """
+    for grp_name in producers:
+        grp_prods = set([ prod['name'] for prod in producers[grp_name]])
+        prod_dict = { prod['name'] : prod for prod in producers[grp_name] }
+
+        # Query the producer list on each aggregator in the group
+        for agg_host in agg_hosts(grp_name, aggregators, hosts):
+            agg_name = agg_host['name']
+            if agg_state[agg_name] != 'ready':
+                continue
+            comm = comms[grp_name][agg_name]
+            err, res = comm.prdcr_status()
+            if err:
+                print(f"Lost connectivity to {agg_name} err {err}")
+                return False
+            else:
+                agg_config = set({ prod['name'] for prod in res })
+
+            add_prods = grp_prods - agg_config
+            print(f"Adding {len(add_prods)} producers to agg {agg_name}")
+            for prod_name in add_prods:
+                prod = prod_dict[prod_name]
+                host_name = prod['host']
+                host = hosts[host_name]
+                interval_s = prod['reconnect']
+                interval_us=cvt_intrvl_str_to_us(interval_s)
+                comm.prdcr_add(
+                            prod_name, prod['type'],
+                            host['xprt'], host['addr'], host['port'],
+                            interval_us)
+    return True
+
+def add_updaters(comms, updaters, aggregators, agg_state, hosts):
+    """
+    Add updaters to Aggregators
+    """
+    for grp_name in updaters:
+        grp_updaters = updaters[grp_name]
+        for updtr_name in grp_updaters:
+            updtr = grp_updaters[updtr_name]
+            for agg_host in agg_hosts(grp_name, aggregators, hosts):
+                if agg_state[agg_host['name']] != 'ready':
+                    continue
+                comm = comms[grp_name][agg_host['name']]
+                # the updater may already exist, in which case the add will fail
+                if 'push' in updtr:
+                    comm.updtr_add(updtr_name, push=updtr['push'])
+                elif 'auto' in updtr:
+                    comm.updtr_add(updtr_name, auto=updtr['auto'])
+                else:
+                    comm.updtr_add(updtr_name, interval=updtr['interval'])
+
+                for regex in updtr['producers']:
+                    comm.updtr_prdcr_add(updtr_name, regex['regex'])
+                for regex in updtr['sets']:
+                    if 'field' in regex:
+                        field = regex['field']
+                    else:
+                        field = None
+                    err, msg = comm.updtr_match_add(updtr_name, regex['regex'], match=field)
+
+                err, msg = comm.updtr_start(updtr_name)
+                if err != 0 and err != errno.EBUSY:
+                    print(f"Error {err} : {msg} starting {updtr_name}")
+                    return False
+    return True
+
+def add_stores(comms, stores, aggregators, agg_state, hosts):
+    """
+    Add stores to Aggregators
+    """
+    for grp_name in stores:
+        grp_stores = stores[grp_name]
+        for store_name in grp_stores:
+            store = grp_stores[store_name]
+            for agg_host in agg_hosts(grp_name, aggregators, hosts):
+                if agg_state[agg_host['name']] != 'ready':
+                    continue
+                comm = comms[grp_name][agg_host['name']]
+                # Load and configure the plugin required by the store
+                plugin = store['plugin']
+                plugin_name = plugin['name']
+                plugin_config = plugin['config']
+                err, res = comm.plugn_load(plugin_name)
+                err, res = comm.plugn_config(plugin_name, **plugin_config)
+
+                ## the stores may already exist, in which case the add will fail
+                err, res = comm.strgp_add(store_name,
+                                        plugin_name,
+                                        store['container'],
+                                        store['schema'])
+                ## Add producers
+                err, res = comm.strgp_prdcr_add(store_name, ".*")
+
+                # Start the store
+                err, msg = comm.strgp_start(store_name)
+                if err != 0 and err != errno.EBUSY:
+                    print(f"Error {err} : {msg} starting {store_name}")
+                    return False
+    return True
+
+def start_producers(comms, groups):
+    """
+    Query each aggregator for its producer status. If it is already
+    running leave it alone, if it is running and not in the new group
+    configuration, stop it.
+    """
+    for grp_name in groups:
+        group = groups[grp_name]
+        for grp_agg in group:
+            agg = grp_agg['aggregator']
+            agg_prods = set(grp_agg['producers'])
+            comm = comms[grp_name][agg['name']]
+
+            # get the current state
+            err, res = comm.prdcr_status()
+            if err:
+                print(f"Error {err} querying state from aggregator {agg['name']}")
+                continue
+
+            start_prods = list(prod['name'] for prod in res \
+                if prod['state'] == 'STOPPED' and prod['name'] in agg_prods)
+            stop_prods = list(prod['name'] for prod in res \
+                if prod['state'] != 'STOPPED' and prod['name'] not in agg_prods)
+
+            print(f"Starting agg {agg['name']} {len(start_prods)} producers")
+            for prod_name in start_prods:
+                comm.prdcr_start(prod_name, regex=False)
+            print(f"Stopping agg {agg['name']} {len(stop_prods)} producers")
+            for prod_name in stop_prods:
+                comm.prdcr_stop(prod_name, regex=False)
+
+def rebalance(prefix, config, agg_state):
+    """
+    Re-build the config for each of the load balance groups
+    """
+    groups = {}
+    if 'producers' in config[prefix]:
+        producers = config[prefix]['producers']
+    else:
+        producers = {}
+    if 'aggregators' in config[prefix]:
+        aggregators = config[prefix]['aggregators']
+    else:
+        aggregators = {}
+    if 'stores' in config[prefix]:
+        stores = config[prefix]['stores']
+    else:
+        stores = {}
+    for group in producers.keys():
+        grp_prods = producers[group]
+        prod_count = len(grp_prods)
+        grp_aggs = []
+        for agg in aggregators[group]:
+            if agg_state[agg['name']] != 'ready':
+                continue
+            grp_aggs.append(agg)
+        agg_count = len(grp_aggs)
+        if agg_count != 0:
+            prods_per_agg = prod_count // agg_count
+            remainder = prod_count % agg_count
+        else:
+            # None of the aggregators are running
+            break
+        # Assign producers to aggregators
+        prod_idx = 0
+        groups[group] = []
+        for agg in grp_aggs:
+            agg_prods = []
+            for cnt in range(0, prods_per_agg):
+                agg_prods.append(grp_prods[prod_idx]['name'])
+                prod_idx += 1
+            if remainder > 0:
+                agg_prods.append(grp_prods[prod_idx]['name'])
+                prod_idx += 1
+                remainder -= 1
+            groups[group].append({ "aggregator" : agg, "producers" : agg_prods })
+
+    # Add all the producers to the aggregators. Any error here is not an issue
+    # because all aggs have all producers, although, not all producers are started.
+    add_producers(comms, producers, aggregators, agg_state, hosts)
+
+    # Add all the updaters and storage policies
+    add_updaters(comms, updaters, aggregators, agg_state, hosts)
+    add_stores(comms, stores, aggregators, agg_state, hosts)
+
+    # Start the producers assigned to each of the Aggregators
+    start_producers(comms, groups)
+
+    return groups
+
+def query_agg_state(client, comms):
+    agg_state = {}
+    for grp_name in comms:
+        group = comms[grp_name]
+        for agg_name in group:
+            comm = group[agg_name]
+            if comm.state != comm.CONNECTED:
+                comm.close()
+                comm.reconnect()
+            err, msg = comm.daemon_status()
+            if err == 0:
+                res = json.loads(msg)
+                state = res['state']
+            else:
+                state = 'stopped'
+            agg_state[agg_name] = state
+    return agg_state
+
+def cluster_monitor():
+    c = etcd3.client(host=etcd_hosts[0][0], port=etcd_hosts[0][1])
+    last_state = {}
+    while True:
+        agg_state = query_agg_state(c, comms)
+        do_rebalance = False
+        for agg in agg_state:
+            if agg not in last_state:
+                do_rebalance = True
+            elif last_state[agg] != agg_state[agg]:
+                do_rebalance = True
+            last_state[agg] = agg_state[agg]
+        if do_rebalance:
+            rebalance(prefix, config, agg_state)
+        time.sleep(1)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="LDMS Monitoring Cluster Manager")
+    parser.add_argument("--cluster", metavar="FILE", required=True,
+                        help="The name of the cluster configuration file")
+    parser.add_argument("--config", metavar="FILE", required=False,
+                        help="The load balance domain configuration file. "
+                        "If specified, this will reload the global cluster "
+                        "configuration database.")
+    parser.add_argument("--dump", action="store_true",
+                        help="Dump the load-balanced aggregation configuration files")
+    parser.add_argument("--prefix", metavar="STRING",
+                        help="The prefix for the dumped aggregator configurations",
+                        default="unknown")
+    parser.add_argument("--version", metavar="VERSION",
+                        help="The OVIS version for the output syntax (4 or 5), default is 4",
+                        default=4)
+    args = parser.parse_args()
+
+    # Load the cluster configuration file. This configures the daemons
+    # that support the key/value configuration database
+    etcd_fp = open(args.cluster)
+    etcd_spec = yaml.safe_load(etcd_fp)
+
+    pfx = etcd_spec['cluster']
+    etcd_hosts = ()
+    for h in etcd_spec['members']:
+        etcd_hosts += (( h['host'], h['port'] ),)
+
+    # Use the 1st host for now
+    client = etcd3.client(host=etcd_hosts[0][0], port=etcd_hosts[0][1],
+        grpc_options=[ ('grpc.max_send_message_length',16*1024*1024),
+                        ('grpc.max_receive_message_length',16*1024*1024)])
+
+    # All keys in the DB are prefixed with the cluster name, 'pfx'. So we can
+    # have multiple monitoring hosted by the same consensus cluster.
+
+    # Load the monitoring cluster configuration. This specifes the
+    # names of all of the nodes being monitored and the metric sets
+    # gathered
+    if args.config:
+        config_fp = open(args.config)
+        conf_spec = yaml.safe_load(config_fp)
+        # blow away the existing configuration
+        cluster = Cluster(client, args.prefix, conf_spec)
+        cluster.save_config()
+        sys.exit(0)
+
+    config = load_config(client, args.prefix)
+    json_config = json.dumps(config)
+
+    # At each load-balance group level the aggregators have all
+    # producers; however, only the producers assigned to each
+    # aggregator are started. This practice reduces the lateny
+    # when an aggregator needs to pick up the load from a
+    # a failed peer
+    prefix = args.prefix
+    if prefix[0] == '/':
+        prefix = prefix[1:]
+
+    hosts = config[prefix]['hosts']
+    producers = config[prefix]['producers']
+    aggregators = config[prefix]['aggregators']
+    updaters = config[prefix]['updaters']
+
+    # Create a communicator for each aggregator
+    comms = {}
+    for grp_name in aggregators:
+        comms[grp_name] = {}
+        for agg_host in agg_hosts(grp_name, aggregators, hosts):
+            comm = Communicator(agg_host['xprt'],
+                                agg_host['addr'],
+                                agg_host['port'],
+                                agg_host['auth']['name'])
+            comms[grp_name][agg_host['name']] = comm
+            comm.connect()
+
+    cluster_monitor()
+    # evq = queue.Queue()
+    # mthread = threading.Thread(target=cluster_monitor)
+    # mthread.start()
+    # evq.join()
+    pass
+
+    # config = Cluster(etcd_spec, conf_spec)
+    # config.balance()
+    # config.commit()
+    # if args.dump:
+    #    config.dump_config(args.prefix, args.version)
