@@ -1,0 +1,8 @@
+cluster: orion
+members:
+  - host: orion-01
+    port: 2379
+  - host: orion-02
+    port: 2379
+  - host: orion-03
+    port: 2379

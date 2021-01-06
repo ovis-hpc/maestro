@@ -1,0 +1,132 @@
+hosts:
+  - names : &sampler-hosts "orion-[01-08]-[10001-10128]"
+    hosts : "orion-[01-08]"
+    ports : "[10001-10128]"
+    xprt : sock
+    auth :
+      name  : munge
+      config  :
+        domain : samplers
+
+  - names : &l1-agg-hosts "agg-[11-14]"
+    hosts : "ovs-5416"
+    ports : "[10011-10014]"
+    xprt : sock
+    auth :
+      name  : munge
+      config  :
+        domain : aggregators
+
+  - names : &l2-agg-hosts "agg-[21,22]"
+    hosts : "ovs-5416"
+    ports : "[10021,10022]"
+    xprt : sock
+    auth :
+      name  : munge
+      config  :
+        domain : aggregators
+
+  - names : &l3-agg-hosts "agg-31"
+    hosts : "ovs-5416"
+    ports : "10031"
+    xprt : sock
+    auth :
+      name  : munge
+      config  :
+        domain : users
+
+aggregators:
+  - names : *l1-agg-hosts
+    hosts : *l1-agg-hosts
+    group : l1-agg
+
+  - names : *l2-agg-hosts
+    hosts : *l2-agg-hosts
+    group: l2-agg
+
+  - names : agg-31
+    hosts : "agg-31"
+    group : l3-agg
+
+producers:
+# This informs the L1 load balance group what is being distributed across
+# the L1 aggregator nodes
+  - names     : *sampler-hosts
+    hosts     : *sampler-hosts
+    group     : l1-agg
+    reconnect : 20s
+    type      : active
+    updaters  :
+      - l1-all
+
+# This informs the L2 load balance group what is being distributed across
+# the L2 aggregator nodes
+  - names      : *l1-agg-hosts
+    hosts      : *l1-agg-hosts
+    group      : l2-agg
+    reconnect  : 20s
+    type       : active
+    updaters   :
+      - l2-all
+
+# This informs the L3 load balance group what is being distributed across
+# the L3 aggregator node
+  - names      : *l2-agg-hosts    # is this really needed?
+    hosts      : *l2-agg-hosts
+    group      : l3-agg 
+    reconnect  : 20s
+    type       : active
+    updaters  :
+      - l3-all
+
+
+updaters:            
+- name  : all           # must be unique within group
+  group : l1-agg
+  interval : "1.0s:0ms"
+  sets :
+    - regex : .*        # regular expression matching set name or schema
+      field : inst      # 'instance' or 'schema'
+  producers :
+    - regex : .*        # regular expression matching producer name
+                        # this is evaluated on the Aggregator, not
+                        # at configuration time'
+- name  : all
+  group : l2-agg
+  interval : "1.0s:250ms"
+  sets :
+    - regex : .*
+      field : inst
+  producers :
+    - regex : .*
+
+- name  : all
+  group : l3-agg
+  interval : "1.0s:500ms"
+  sets :
+    - regex : .*
+      field : inst
+  producers :
+    - regex : .*
+  
+stores :
+  - name      : sos
+    group     : l3-agg
+    container : ldms_data
+    schema    : meminfo
+    plugin :
+      name   : store_sos
+      config : { path : /DATA15/sos/orion }
+
+  - name : csv
+    group     : l3-agg
+    container : ldms_data
+    schema    : meminfo
+    plugin :
+      name : store_csv
+      config :
+        path        : /DATA15/csv/orion
+        altheader   : 0
+        typeheader  : 1
+        create_uid  : 3031
+        create_gid  : 3031
