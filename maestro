@@ -673,7 +673,7 @@ if __name__ == "__main__":
 
     # At each load-balance group level the aggregators have all
     # producers; however, only the producers assigned to each
-    # aggregator are started. This practice reduces the lateny
+    # aggregator are started. This practice reduces the latency
     # when an aggregator needs to pick up the load from a
     # a failed peer
     prefix = args.prefix
