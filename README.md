@@ -21,8 +21,8 @@ In this current release, Maestro does not start and start __ldmsd__
 daemons, however, this feature is planned for the future.
 
 ## Dependencies
-python-hostlist
-etcd3
+etcd3 can be downlaoded via pip3, or from source at:
+https://github.com/etcd-io/etcd
 
 ## Configuration Management
 
