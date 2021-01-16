@@ -20,6 +20,10 @@ configuration across the remaining aggregators in a group
 In this current release, Maestro does not start and start __ldmsd__
 daemons, however, this feature is planned for the future.
 
+## Dependencies
+etcd3 can be downlaoded via pip3, or from source at:
+https://github.com/etcd-io/etcd
+
 ## Configuration Management
 
 A cluster's configuration is mangaged in a distributed RAFT based
