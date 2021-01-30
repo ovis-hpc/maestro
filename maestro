@@ -168,6 +168,14 @@ class Cluster(object):
             if len(names) != len(hosts):
                 raise ValueError('"producer": The "host" and "name" specifications must '
                                 'expand to the same number of strings')
+
+            if 'subscribe' in prod:
+                subscribe_spec = prod['subscribe']
+                if type(subscribe_spec) != list and type(subscribe_spec) != tuple:
+                    subscribe_spec = [ subscribe_spec ]
+            else:
+                subscribe_spec = []
+
             upd_spec = prod['updaters']
 
             # Expand and generate all the producers
@@ -181,6 +189,7 @@ class Cluster(object):
                     'type'      : typ,
                     'group'     : group,
                     'reconnect' : reconnect,
+                    'subscribe' : subscribe_spec,
                     'updaters'  : upd_spec
                 }
                 producers[group].append(prod)
@@ -403,6 +412,7 @@ def add_producers(comms, producers, aggregators, agg_state, hosts):
         # Query the producer list on each aggregator in the group
         for agg_host in agg_hosts(grp_name, aggregators, hosts):
             agg_name = agg_host['name']
+            agg_port = agg_host['port']
             if agg_state[agg_name] != 'ready':
                 continue
             comm = comms[grp_name][agg_name]
@@ -414,7 +424,7 @@ def add_producers(comms, producers, aggregators, agg_state, hosts):
                 agg_config = set({ prod['name'] for prod in res })
 
             add_prods = grp_prods - agg_config
-            print(f"Adding {len(add_prods)} producers to agg {agg_name}")
+            print(f"Adding {len(add_prods)} producers to agg {agg_name}:{agg_port}")
             for prod_name in add_prods:
                 prod = prod_dict[prod_name]
                 host_name = prod['host']
@@ -425,6 +435,29 @@ def add_producers(comms, producers, aggregators, agg_state, hosts):
                             prod_name, prod['type'],
                             host['xprt'], host['addr'], host['port'],
                             interval_us)
+                if 'subscribe' in prod:
+                    subs = prod['subscribe']
+                    if len(subs) > 0:
+                        for stream in subs:
+                            comm.prdcr_subscribe(prod_name, stream)
+
+    return True
+
+def start_updaters(comms, updaters, aggregators, agg_state, hosts):
+    """
+    Add updaters to Aggregators
+    """
+    for grp_name in updaters:
+        grp_updaters = updaters[grp_name]
+        for updtr_name in grp_updaters:
+            updtr = grp_updaters[updtr_name]
+            for agg_host in agg_hosts(grp_name, aggregators, hosts):
+                if agg_state[agg_host['name']] != 'ready':
+                    continue
+                comm = comms[grp_name][agg_host['name']]
+                err, msg = comm.updtr_start(updtr_name)
+                if err != 0 and err != errno.EBUSY:
+                    print(f"Error {err} : {msg} starting {updtr_name}")
     return True
 
 def add_updaters(comms, updaters, aggregators, agg_state, hosts):
@@ -455,11 +488,22 @@ def add_updaters(comms, updaters, aggregators, agg_state, hosts):
                     else:
                         field = None
                     err, msg = comm.updtr_match_add(updtr_name, regex['regex'], match=field)
+    return True
 
-                err, msg = comm.updtr_start(updtr_name)
+def start_stores(comms, stores, aggregators, agg_state, hosts):
+    # Start the store
+    for grp_name in stores:
+        grp_stores = stores[grp_name]
+        for store_name in grp_stores:
+            store = grp_stores[store_name]
+            for agg_host in agg_hosts(grp_name, aggregators, hosts):
+                if agg_state[agg_host['name']] != 'ready':
+                    continue
+                comm = comms[grp_name][agg_host['name']]
+                # Start the store
+                err, msg = comm.strgp_start(store_name)
                 if err != 0 and err != errno.EBUSY:
-                    print(f"Error {err} : {msg} starting {updtr_name}")
-                    return False
+                    print(f"Error {err} : {msg} starting {store_name}")
     return True
 
 def add_stores(comms, stores, aggregators, agg_state, hosts):
@@ -489,11 +533,6 @@ def add_stores(comms, stores, aggregators, agg_state, hosts):
                 ## Add producers
                 err, res = comm.strgp_prdcr_add(store_name, ".*")
 
-                # Start the store
-                err, msg = comm.strgp_start(store_name)
-                if err != 0 and err != errno.EBUSY:
-                    print(f"Error {err} : {msg} starting {store_name}")
-                    return False
     return True
 
 def start_producers(comms, groups):
@@ -576,14 +615,13 @@ def rebalance(prefix, config, agg_state):
     # Add all the producers to the aggregators. Any error here is not an issue
     # because all aggs have all producers, although, not all producers are started.
     add_producers(comms, producers, aggregators, agg_state, hosts)
-
-    # Add all the updaters and storage policies
     add_updaters(comms, updaters, aggregators, agg_state, hosts)
     add_stores(comms, stores, aggregators, agg_state, hosts)
 
     # Start the producers assigned to each of the Aggregators
+    start_stores(comms, stores, aggregators, agg_state, hosts)
     start_producers(comms, groups)
-
+    start_updaters(comms, updaters, aggregators, agg_state, hosts)
     return groups
 
 def query_agg_state(client, comms):
