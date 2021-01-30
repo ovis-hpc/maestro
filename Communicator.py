@@ -509,7 +509,7 @@ class Communicator(object):
         - status is an errno from the errno module
         - data is an error message if status != 0 or None
         """
-        req = LDMSD_Request(command_id = LDMSD_Request.PRDCR_STREAM_SUBSCRIBE,
+        req = LDMSD_Request(command_id = LDMSD_Request.PRDCR_SUBSCRIBE,
                 attrs = [
                     LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.REGEX, value=regex),
                     LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.STREAM, value=stream)
@@ -639,13 +639,17 @@ class Communicator(object):
             if push != 'onchange' and push != True:
                 return errno.EINVAL, "EINVAL"
             attrs += [
-                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PUSH, value=str(push))
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PUSH, value=str(push)),
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(1000000)),
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(0))
             ]
         else:
             if auto is None:
                 return errno.EINVAL, "EINVAL"
             attrs += [
-                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.AUTO_INTERVAL, value=str(auto))
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.AUTO_INTERVAL, value=str(auto)),
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(1000000)),
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(0))
             ]
         if perm:
             attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PERM, value=str(perm)))
