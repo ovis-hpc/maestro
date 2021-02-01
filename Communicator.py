@@ -178,6 +178,17 @@ class Communicator(object):
     def getPort(self):
         return self.port
 
+    def args_to_cfg_str(self, **args):
+        """Convert python arguments to ldmsd readable string"""
+        cfg_str = ''
+        for key in args:
+            if args[key] is None:
+                continue
+            if len(cfg_str):
+                cfg_str += ' '
+            cfg_str += key + '=' + str(args[key])
+        return cfg_str
+
     def send_command(self, cmd):
         """This is called by the LDMSRequest class to send a message"""
         if self.state != self.CONNECTED:
@@ -229,17 +240,11 @@ class Communicator(object):
         Keyword Parameters:
         - dictionary of plugin specific key/value paris
         """
-        ## configure the plugin
-        cfg_str = ''
-        for key in args:
-            if len(cfg_str):
-                cfg_str += ' ' 
-            cfg_str += key + '=' + args[key]
+        cfg_str = 'config name='+name+' '+self.args_to_cfg_str(**args)
         req = LDMSD_Request(
                 command_id=LDMSD_Request.PLUGN_CONFIG,
-                attrs=[
-                    LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name),
-                    LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.STRING, value=cfg_str)
+                attrs=[ LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name),
+                        LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.STRING, value=cfg_str)
                 ])
         try:
             req.send(self)
@@ -337,6 +342,28 @@ class Communicator(object):
             self.close()
             return errno.ENOTCONN, None
         if err == 0:
+            status = json.loads(resp['msg'])
+        else:
+            status = None
+        return err, status
+
+    def smplr_start(self, name, interval_str):
+        intrvl_us, offset_us = cvt_sample_intrvl_str_to_us(interval_str)
+        req = LDMSD_Request(
+                command_id = LDMSD_Request.PLUGN_START,
+                attrs=[
+                    LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name),
+                    LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(intrvl_us)),
+                    LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset_us))
+                ])
+        try:
+            req.send(self)
+            resp = req.receive(self)
+            err = resp['errcode']
+        except Exception:
+            self.close()
+            return errno.ENOTCONN, None
+        if err == 0 and resp['msg'] is not None:
             status = json.loads(resp['msg'])
         else:
             status = None

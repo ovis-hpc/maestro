@@ -30,20 +30,11 @@ class Cluster(object):
             else:
                 item = 0
                 for v in obj:
-                    # we want to keys to be returned in numberical order which requires z-fill
+                    # we want keys to be returned in numerical order which requires z-fill
                     self.walk(v, path + '/{0:06}'.format(item))
                     item += 1
         elif obj:
             self.emit_value(path, obj)
-
-    def expand_names(self, name_spec):
-        if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
-            names = []
-            for name in name_spec:
-                names += hostlist.expand_hostlist(name)
-        else:
-            names = hostlist.expand_hostlist(name_spec)
-        return names
 
     def check_required(self, attr_list, container, container_name):
         """Verify that each name in attr_list is in the container"""
@@ -86,9 +77,9 @@ class Cluster(object):
         for spec in node_config:
             self.check_required([ 'names', 'hosts', 'ports' ],
                                 spec, "host specification")
-            names = self.expand_names(spec['names'])
-            hosts = self.expand_names(spec['hosts'])
-            ports = self.expand_names(spec['ports'])
+            names = expand_names(spec['names'])
+            hosts = expand_names(spec['hosts'])
+            ports = expand_names(spec['ports'])
             if 'xprt' in spec:
                 xprt = spec['xprt']
             else:
@@ -130,11 +121,11 @@ class Cluster(object):
             self.check_required([ 'names', 'group', 'hosts' ],
                                 agg_spec, "aggregator specification")
 
-            names = self.expand_names(agg_spec['names'])
+            names = expand_names(agg_spec['names'])
             group = agg_spec['group']
             if group not in aggregators:
                 aggregators[group] = []
-            hosts = self.expand_names(agg_spec['hosts'])
+            hosts = expand_names(agg_spec['hosts'])
             if len(names) != len(hosts):
                 raise ValueError('"aggregators:" The "host" and "name" specifications must '
                                 'expand to the same number of names')
@@ -159,8 +150,8 @@ class Cluster(object):
             self.check_required([ 'names', 'hosts', 'updaters',
                                 'reconnect', 'type', 'group' ],
                                 prod, '"producer" entry')
-            names = self.expand_names(prod['names'])
-            hosts = self.expand_names(prod['hosts'])
+            names = expand_names(prod['names'])
+            hosts = expand_names(prod['hosts'])
             group = prod['group']
             if group not in producers:
                 producers[group] = []
@@ -249,8 +240,18 @@ class Cluster(object):
         return stores
 
     def build_samplers(self, config):
-        """Generate samplers from YAML config"""
-        return {}
+        """
+        Generate samplers from YAML config.
+        Return a dictionary keyed by the samplers group name. Each dictionary
+        entry is a single ldms daemon's sampler configuration.
+        """
+        
+        smplrs = {}
+        for smplr_spec in config['samplers']:
+            self.check_required([ 'names' ],
+                                  smplr_spec, '"sampler" entry')
+            smplrs[smplr_spec['names']] = smplr_spec
+        return smplrs
 
     def __init__(self, client, name, cluster_config):
         """
@@ -289,9 +290,11 @@ class Cluster(object):
         self.client.delete_prefix('/' + self.name)
         self.walk(self.hosts, '/' + self.name + '/hosts')
         self.walk(self.aggregators, '/' + self.name + '/aggregators')
+        self.walk(self.samplers, '/' + self.name + '/samplers')
         self.walk(self.producers, '/' + self.name + '/producers')
         self.walk(self.updaters, '/' + self.name + '/updaters')
         self.walk(self.stores, '/' + self.name + '/stores')
+
     def config_v4(self):
         """Read the group configuration from ETCD and generate a version 4 LDMSD configuration"""
         pass
@@ -345,6 +348,15 @@ def load_config(client, key_prefix):
     # json_config = json.dumps(config)
     return config
 
+def expand_names(name_spec):
+    if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
+        names = []
+        for name in name_spec:
+            names += hostlist.expand_hostlist(name)
+    else:
+        names = hostlist.expand_hostlist(name_spec)
+    return names
+
 def cvt_intrvl_str_to_us(interval_s):
     """Converts a time interval string to microseconds
 
@@ -384,6 +396,61 @@ def cvt_intrvl_str_to_us(interval_s):
 def agg_hosts(grp_name, aggs, hosts):
     return [ hosts[a['host']] for a in aggs[grp_name] ]
 
+def sampler_hosts(ldmsds, hosts):
+    return [ hosts[a] for a in ldmsds ]
+
+def start_samplers(samplers, hosts):
+    """Configure and load plugins for sampler daemons"""
+    comms = {}
+    for smplr_spec in samplers.keys():
+        names = expand_names(smplr_spec)
+        i = 0
+        comms[smplr_spec] = {}
+        for smplr_host in sampler_hosts(names, hosts):
+            smplr_name = smplr_host['name']
+            # Establish communicator to each ldmsd sampler
+            comm = Communicator(smplr_host['xprt'],
+                                smplr_host['addr'],
+                                smplr_host['port'],
+                                smplr_host['auth']['name'])
+            comms[smplr_spec][smplr_host['name']] = comm
+            comm.connect()
+            err, res = comm.daemon_status()
+            if err:
+                print(f"Lost connectivity to {smplr_host['name']} err {err}")
+                return False
+            print(f"Adding sampler plugins to sampler {smplr_name}")
+            for plugin in samplers[smplr_spec]['config']:
+                err, rc = comm.plugn_load(plugin['name'])
+                if err == 17:
+                    print(f"File exists: {rc}")
+                elif err != 0:
+                    print(f"Error {err} loading plugin {plugin['name']}")
+                    continue
+                cfg_args = { "producer"  : smplr_host['name'],
+                             "instance"  : smplr_host['name'] +'/'+plugin['name'] }
+                for attr in plugin.keys():
+                    if attr == 'name' or attr == 'interval':
+                        continue
+                    cfg_args[attr] = plugin[attr]
+                err, msg = comm.plugn_config(name=plugin['name'], **cfg_args)
+                if err:
+                    print(f"Error: {err} configuring {smplr_name}")
+                    continue
+                print(f"{smplr_name} configured. Starting... {plugin['name']}")
+                cfg_args = {}
+                if 'interval' in plugin:
+                    interval = plugin['interval']
+                else:
+                    interval = '1.0s:0ms'
+                err, msg = comm.smplr_start(plugin['name'], interval)
+                if err:
+                    print(f"Error {err} starting {plugin['name']} on {smplr_name} "
+                           "Error: {msg}")
+                    continue
+            i += 1
+    return True
+
 def add_producers(comms, producers, aggregators, agg_state, hosts):
     """Add producers to Aggregators
 
@@ -412,7 +479,6 @@ def add_producers(comms, producers, aggregators, agg_state, hosts):
                 return False
             else:
                 agg_config = set({ prod['name'] for prod in res })
-
             add_prods = grp_prods - agg_config
             print(f"Adding {len(add_prods)} producers to agg {agg_name}")
             for prod_name in add_prods:
@@ -536,6 +602,10 @@ def rebalance(prefix, config, agg_state):
         producers = config[prefix]['producers']
     else:
         producers = {}
+    if 'samplers' in config[prefix]:
+        samplers = config[prefix]['samplers']
+    else:
+        samplers = {}
     if 'aggregators' in config[prefix]:
         aggregators = config[prefix]['aggregators']
     else:
@@ -573,6 +643,7 @@ def rebalance(prefix, config, agg_state):
                 remainder -= 1
             groups[group].append({ "aggregator" : agg, "producers" : agg_prods })
 
+    start_samplers(samplers, hosts) 
     # Add all the producers to the aggregators. Any error here is not an issue
     # because all aggs have all producers, although, not all producers are started.
     add_producers(comms, producers, aggregators, agg_state, hosts)
@@ -586,12 +657,12 @@ def rebalance(prefix, config, agg_state):
 
     return groups
 
-def query_agg_state(client, comms):
-    agg_state = {}
+def query_ldmsd_state(client, comms):
+    ldmsd_state = {}
     for grp_name in comms:
         group = comms[grp_name]
-        for agg_name in group:
-            comm = group[agg_name]
+        for name in group:
+            comm = group[name]
             if comm.state != comm.CONNECTED:
                 comm.close()
                 comm.reconnect()
@@ -601,14 +672,14 @@ def query_agg_state(client, comms):
                 state = res['state']
             else:
                 state = 'stopped'
-            agg_state[agg_name] = state
-    return agg_state
+            ldmsd_state[name] = state
+    return ldmsd_state
 
 def cluster_monitor():
     c = etcd3.client(host=etcd_hosts[0][0], port=etcd_hosts[0][1])
     last_state = {}
     while True:
-        agg_state = query_agg_state(c, comms)
+        agg_state = query_ldmsd_state(c, comms)
         do_rebalance = False
         for agg in agg_state:
             if agg not in last_state:
@@ -624,11 +695,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="LDMS Monitoring Cluster Manager")
     parser.add_argument("--cluster", metavar="FILE", required=True,
-                        help="The name of the cluster configuration file")
-    parser.add_argument("--config", metavar="FILE", required=False,
+                        help="The name of the etcd cluster configuration file")
+    parser.add_argument("--ldms_config", metavar="FILE", required=False,
                         help="The load balance domain configuration file. "
-                        "If specified, this will reload the global cluster "
-                        "configuration database.")
+                        "If specified, this will reload the global ldms cluster "
+                        "configuration database. This will not start the maestro "
+                        "load balancer")
     parser.add_argument("--dump", action="store_true",
                         help="Dump the load-balanced aggregation configuration files")
     parser.add_argument("--prefix", metavar="STRING",
@@ -660,27 +732,29 @@ if __name__ == "__main__":
     # Load the monitoring cluster configuration. This specifes the
     # names of all of the nodes being monitored and the metric sets
     # gathered
-    if args.config:
-        config_fp = open(args.config)
+    if args.ldms_config:
+        config_fp = open(args.ldms_config)
         conf_spec = yaml.safe_load(config_fp)
         # blow away the existing configuration
         cluster = Cluster(client, args.prefix, conf_spec)
         cluster.save_config()
+        print("LDMS aggregator configuration saved to etcd cluster. Exiting..")
+        # Config and start the samplers on each producer
         sys.exit(0)
 
-    config = load_config(client, args.prefix)
-    json_config = json.dumps(config)
 
     # At each load-balance group level the aggregators have all
     # producers; however, only the producers assigned to each
     # aggregator are started. This practice reduces the latency
     # when an aggregator needs to pick up the load from a
     # a failed peer
+    config = load_config(client, args.prefix)
+    json_config = json.dumps(config)
     prefix = args.prefix
     if prefix[0] == '/':
         prefix = prefix[1:]
-
     hosts = config[prefix]['hosts']
+    samplers = config[prefix]['samplers']
     producers = config[prefix]['producers']
     aggregators = config[prefix]['aggregators']
     updaters = config[prefix]['updaters']
