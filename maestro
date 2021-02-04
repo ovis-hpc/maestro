@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os, sys
+import subprocess
 import errno
 import yaml
 import hostlist
@@ -703,9 +704,11 @@ if __name__ == "__main__":
                         "load balancer")
     parser.add_argument("--dump", action="store_true",
                         help="Dump the load-balanced aggregation configuration files")
-    parser.add_argument("--prefix", metavar="STRING",
+    parser.add_argument("--prefix", metavar="STRING", required=True,
                         help="The prefix for the dumped aggregator configurations",
                         default="unknown")
+    parser.add_argument("--start-aggregators", action='store_true',
+                        help="Start ldms aggregator daemon's")
     parser.add_argument("--version", metavar="VERSION",
                         help="The OVIS version for the output syntax (4 or 5), default is 4",
                         default=4)
@@ -764,6 +767,15 @@ if __name__ == "__main__":
     for grp_name in aggregators:
         comms[grp_name] = {}
         for agg_host in agg_hosts(grp_name, aggregators, hosts):
+            if args.start_aggregators:
+                # For now create log and pid files in log subdirectory
+                subprocess.run(['ldmsd',
+                               '-x', agg_host['xprt']+':'+agg_host['port'],
+                               '-a', agg_host['auth']['name'],
+                               '-l', 'log/'+agg_host['name']+'.log',
+                               '-m', '2g',
+                               '-r', 'log/'+agg_host['name']+'.pid'])
+
             comm = Communicator(agg_host['xprt'],
                                 agg_host['addr'],
                                 agg_host['port'],
