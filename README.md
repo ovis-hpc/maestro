@@ -34,6 +34,20 @@ There are two configuration files consumed by __maestro__:
 1. A file that defines the _etcd_ cluster configuration
 2. A file that defines the LDMS Cluster Configuration
 
+There are two principle ways to use the maestro command. The first is to load the ldmsd
+cluster configuration into the etcd cluster. The ldmsd config is a yaml file specified
+in the maestro command like so:
+
+    maestro --cluster config/etcd.yaml --ldmsd_config config/orion.yaml --prefix config
+
+With this vernacular, maestro will load the new ldmsd configurations into the etcd cluster,
+but will not run the load balancer. 
+
+The second option will run the maestro load balancer after both clusters 
+have been configured, as seen below:
+
+    maestro --cluster=config/etcd.yaml
+
 ### ETCD Cluster Configuration
 
 Maestro consumes configuration files in YAML format.
@@ -105,6 +119,17 @@ aggregators:
   - names : agg-31
     hosts : "agg-31"
     group : l3-agg
+
+samplers:
+  - names       : *sampler-hosts
+    config :
+      - name        : meminfo # Variables can be specific to plugin
+        interval    : "1.0s:0ms" # Interval:offset format. Used when starting the sampler plugin
+        perm        : "0777"
+
+      - name        : vmstat
+        interval    : "1.0s:0ms" # Interval:offset format. Used when starting the sampler plugin
+        perm        : "0777"
 
 producers:
 # This informs the L1 load balance group what is being distributed across

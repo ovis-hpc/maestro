@@ -48,6 +48,18 @@ aggregators:
     hosts : "agg-31"
     group : l3-agg
 
+samplers:
+# This is the configuration for the LDMS sampler daemons
+  - names       : *sampler-hosts
+    config :
+      - name        : meminfo
+        interval    : "1.0s:0ms" # Format is interval:offset
+        perms       : "0777"
+
+      - name        : vmstat
+        interval    : "1.0s:0ms"
+        perms       : "0777"
+
 producers:
 # This informs the L1 load balance group what is being distributed across
 # the L1 aggregator nodes
