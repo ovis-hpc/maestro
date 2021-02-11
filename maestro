@@ -14,302 +14,6 @@ import time
 from collections import Mapping, Set, Sequence
 from Communicator import Communicator
 
-class Cluster(object):
-    def emit_value(self, path, value):
-        try:
-            res = client.put(path, str(value))
-        except Exception as e:
-            print("Error {0} setting {1} : {2}".format(str(e), path, str(value)))
-
-    def walk(self, obj, path=''):
-        if isinstance(obj, Mapping):
-            for key in obj:
-                self.walk(obj[key], '{0}/{1}'.format(path, str(key)))
-        elif isinstance(obj, Sequence):
-            if isinstance(obj, (str, bytearray)):
-                self.emit_value(path, obj)
-            else:
-                item = 0
-                for v in obj:
-                    # we want keys to be returned in numerical order which requires z-fill
-                    self.walk(v, path + '/{0:06}'.format(item))
-                    item += 1
-        elif obj:
-            self.emit_value(path, obj)
-
-    def check_required(self, attr_list, container, container_name):
-        """Verify that each name in attr_list is in the container"""
-        for name in attr_list:
-            if name not in container:
-                raise ValueError("The '{0}' attribute is required in a {1}".
-                                 format(name, container_name))
-
-    def build_hosts(self, config):
-        """Generate a host spec list from YAML config
-
-        Builds a dictionary of host definitions. The 'config' is a
-        list of host specifications. Each host specification contains
-        'name', 'host', and 'port' attributes. All attributes are
-        expanded per the slurm hostlist rules. The length of the
-        expanded name-list, must equal the length of the expanded
-        host-list times the expanded port-list.
-
-        Example:
-
-        names : "nid[0001-0002]-[10001-10002]"
-        hosts : "nid[0001-0002]"
-        ports : "[10001-10002]"
-
-        results in the following host-spec dictionary:
-
-        {
-        "nid0001-10001" : { "host" : "nid0001", "port" : 10001 },
-        "nid0001-10002" : { "host" : "nid0001", "port" : 10002 },
-        "nid0002-10001" : { "host" : "nid0002", "port" : 10001 },
-        "nid0002-10002" : { "host" : "nid0002", "port" : 10002 }
-        }
-
-        """
-        host_dict = {}
-        if 'hosts' not in config:
-            return host_dict
-
-        node_config = config['hosts']
-        for spec in node_config:
-            self.check_required([ 'names', 'hosts', 'ports' ],
-                                spec, "host specification")
-            names = expand_names(spec['names'])
-            hosts = expand_names(spec['hosts'])
-            ports = expand_names(spec['ports'])
-            if 'xprt' in spec:
-                xprt = spec['xprt']
-            else:
-                xprt = 'sock'
-            if 'auth' in spec:
-                auth = spec['auth']
-                self.check_required([ 'name' ],
-                                    auth, "authentication configuration")
-                auth_name = auth['name']
-                if 'config' in auth:
-                    auth_config = auth['config']
-                else:
-                    auth_config = ""
-            else:
-                auth_name = 'none'
-                auth_config = ""
-            # build compute for each host x port
-            for host in hosts:
-                for port in ports:
-                    name = names.pop(0)
-                    h = {
-                        'name' : name,
-                        'addr' : host,
-                        'port' : port,
-                        'xprt' : xprt,
-                        'auth' : { 'name' : auth_name, 'config' : auth_config }
-                    }
-                    host_dict[name] = h
-
-        return host_dict
-
-    def build_aggregators(self, config):
-        aggregators = {}
-        if 'aggregators' not in config:
-            return aggregators
-
-        agg_conf = config['aggregators']
-        for agg_spec in agg_conf:
-            self.check_required([ 'names', 'group', 'hosts' ],
-                                agg_spec, "aggregator specification")
-
-            names = expand_names(agg_spec['names'])
-            group = agg_spec['group']
-            if group not in aggregators:
-                aggregators[group] = []
-            hosts = expand_names(agg_spec['hosts'])
-            if len(names) != len(hosts):
-                raise ValueError('"aggregators:" The "host" and "name" specifications must '
-                                'expand to the same number of names')
-            for name in names:
-                host = hosts.pop(0)
-                agg = {
-                        'name'  : name,
-                        'host'  : host,
-                        'state' : 'stopped' # 'running', 'error'
-                }
-                aggregators[group].append(agg)
-        return aggregators
-
-    def build_producers(self, config):
-        """
-        Return a dictionary keyed by the group name. Each dictionary
-        entry is a list of producers in that group.
-        """
-        producers = {}
-        prod_spec = config['producers']
-        for prod in prod_spec:
-            self.check_required([ 'names', 'hosts', 'updaters',
-                                'reconnect', 'type', 'group' ],
-                                prod, '"producer" entry')
-            names = expand_names(prod['names'])
-            hosts = expand_names(prod['hosts'])
-            group = prod['group']
-            if group not in producers:
-                producers[group] = []
-
-            if len(names) != len(hosts):
-                raise ValueError('"producer": The "host" and "name" specifications must '
-                                'expand to the same number of strings')
-            upd_spec = prod['updaters']
-
-            # Expand and generate all the producers
-            typ = prod['type']
-            reconnect = prod['reconnect']
-            for name in names:
-                host = hosts.pop(0)
-                prod = {
-                    'name'      : name,
-                    'host'      : host,
-                    'type'      : typ,
-                    'group'     : group,
-                    'reconnect' : reconnect,
-                    'updaters'  : upd_spec
-                }
-                producers[group].append(prod)
-        return producers
-
-    def build_updaters(self, config):
-        """
-        Return a dictionary keyed by the group name. Each dictionary
-        entry is a list of updaters in that group.
-        """
-        updaters = {}
-        for updtr_spec in config['updaters']:
-            self.check_required([ 'name', 'group', 'interval', 'sets', 'producers' ],
-                                updtr_spec, '"updater" entry')
-            group = updtr_spec['group']
-            if group not in updaters:
-                updaters[group] = {}
-            grp_updaters = updaters[group]
-            updtr_name = updtr_spec['name']
-            if updtr_name in grp_updaters:
-                raise ValueError(f"Duplicate updater name '{updtr_name}''. "
-                            "An updater name must be unique within the group")
-            updtr = {
-                'name'      : updtr_name,
-                'interval'  : updtr_spec['interval'],
-                'group'     : updtr_spec['group'],
-                'sets'      : updtr_spec['sets'],
-                'producers' : updtr_spec['producers']
-            }
-            if 'auto' in updtr_spec and 'push' in updtr_spec:
-                raise ValueError(f"The updater specification: {json.dumps(updtr_spec)} "
-                                "contains both 'push' and 'auto' which are "
-                                "mutually exclusive")
-            if 'auto' in updtr_spec:
-                updtr['auto'] = updtr_spec['auto']
-            if 'push' in updtr_spec:
-                updtr['push'] = updtr_spec['push']
-
-            grp_updaters[updtr_name] = updtr
-        return updaters
-
-    def build_stores(self, config):
-        """
-        Return a dictionary keyed by the group name. Each dictionary
-        entry is a list of stores in that group.
-        """
-        stores = {}
-        if 'stores' not in config:
-            return None
-        for store_spec in config['stores']:
-            self.check_required([ 'name', 'group', 'plugin', 'container', 'schema' ],
-                                store_spec, '"store" entry')
-            group = store_spec['group']
-            if group not in stores:
-                stores[group] = {}
-            grp_stores = stores[group]
-            store_name = store_spec['name']
-            if store_name in grp_stores:
-                raise ValueError(f"Duplicate store name '{store_name}''. "
-                            "A store name must be unique within the group")
-
-            self.check_required([ 'name', 'config'],
-                             store_spec['plugin'],
-                            '"store plugin" entry')
-            grp_stores[store_name] = store_spec
-        return stores
-
-    def build_samplers(self, config):
-        """
-        Generate samplers from YAML config.
-        Return a dictionary keyed by the samplers group name. Each dictionary
-        entry is a single ldms daemon's sampler configuration.
-        """
-        
-        smplrs = {}
-        for smplr_spec in config['samplers']:
-            self.check_required([ 'names' ],
-                                  smplr_spec, '"sampler" entry')
-            smplrs[smplr_spec['names']] = smplr_spec
-        return smplrs
-
-    def __init__(self, client, name, cluster_config):
-        """
-        """
-        self.client = client
-        self.name = name
-        self.hosts = self.build_hosts(cluster_config)
-        self.aggregators = self.build_aggregators(cluster_config)
-        self.producers = self.build_producers(cluster_config)
-        self.updaters = self.build_updaters(cluster_config)
-        self.stores = self.build_stores(cluster_config)
-        self.samplers = self.build_samplers(cluster_config)
-
-    def cvt_time_spec_to_us(self, ts):
-        if type(ts) == int:
-            return ts * 1000000
-        x = ts.find('us')
-        if x > 0:
-            return ts[:x]
-
-        x = ts.find('ms')
-        if x > 0:
-            return int(float(ts[:x]) * 1000)
-
-        x = ts.find('s')
-        if x > 0:
-            return int(float(ts[:x]) * 1000000)
-
-        # assume seconds
-        return int(float(ts) * 1000000)
-
-    def commit(self):
-        pass
-
-    def save_config(self):
-        self.client.delete_prefix('/' + self.name)
-        self.walk(self.hosts, '/' + self.name + '/hosts')
-        self.walk(self.aggregators, '/' + self.name + '/aggregators')
-        self.walk(self.samplers, '/' + self.name + '/samplers')
-        self.walk(self.producers, '/' + self.name + '/producers')
-        self.walk(self.updaters, '/' + self.name + '/updaters')
-        self.walk(self.stores, '/' + self.name + '/stores')
-
-    def config_v4(self):
-        """Read the group configuration from ETCD and generate a version 4 LDMSD configuration"""
-        pass
-
-    def config_v5(self):
-        pass
-
-    def config(self, version=4):
-        if version == 4:
-            return self.config_v4()
-        elif version == 5:
-            return self.config_v5()
-        raise ValueError("Version {0} is not recognized".format(version))
-
 def load_config(client, key_prefix):
     """
     Build a configuration dictionary from the k,v
@@ -550,9 +254,9 @@ def add_stores(comms, stores, aggregators, agg_state, hosts):
 
                 ## the stores may already exist, in which case the add will fail
                 err, res = comm.strgp_add(store_name,
-                                        plugin_name,
-                                        store['container'],
-                                        store['schema'])
+                                          plugin_name,
+                                          store['container'],
+                                          store['schema'])
                 ## Add producers
                 err, res = comm.strgp_prdcr_add(store_name, ".*")
 
@@ -644,7 +348,8 @@ def rebalance(prefix, config, agg_state):
                 remainder -= 1
             groups[group].append({ "aggregator" : agg, "producers" : agg_prods })
 
-    start_samplers(samplers, hosts) 
+    if args.start_samplers:
+        start_samplers(samplers, hosts) 
     # Add all the producers to the aggregators. Any error here is not an issue
     # because all aggs have all producers, although, not all producers are started.
     add_producers(comms, producers, aggregators, agg_state, hosts)
@@ -668,7 +373,7 @@ def query_ldmsd_state(client, comms):
                 comm.close()
                 comm.reconnect()
             err, msg = comm.daemon_status()
-            if err == 0:
+            4if err == 0:
                 res = json.loads(msg)
                 state = res['state']
             else:
@@ -697,11 +402,6 @@ if __name__ == "__main__":
         description="LDMS Monitoring Cluster Manager")
     parser.add_argument("--cluster", metavar="FILE", required=True,
                         help="The name of the etcd cluster configuration file")
-    parser.add_argument("--ldms_config", metavar="FILE", required=False,
-                        help="The load balance domain configuration file. "
-                        "If specified, this will reload the global ldms cluster "
-                        "configuration database. This will not start the maestro "
-                        "load balancer")
     parser.add_argument("--dump", action="store_true",
                         help="Dump the load-balanced aggregation configuration files")
     parser.add_argument("--prefix", metavar="STRING", required=True,
@@ -732,25 +432,11 @@ if __name__ == "__main__":
     # All keys in the DB are prefixed with the cluster name, 'pfx'. So we can
     # have multiple monitoring hosted by the same consensus cluster.
 
-    # Load the monitoring cluster configuration. This specifes the
-    # names of all of the nodes being monitored and the metric sets
-    # gathered
-    if args.ldms_config:
-        config_fp = open(args.ldms_config)
-        conf_spec = yaml.safe_load(config_fp)
-        # blow away the existing configuration
-        cluster = Cluster(client, args.prefix, conf_spec)
-        cluster.save_config()
-        print("LDMS aggregator configuration saved to etcd cluster. Exiting..")
-        # Config and start the samplers on each producer
-        sys.exit(0)
-
-
     # At each load-balance group level the aggregators have all
     # producers; however, only the producers assigned to each
     # aggregator are started. This practice reduces the latency
     # when an aggregator needs to pick up the load from a
-    # a failed peer
+    # failed peer
     config = load_config(client, args.prefix)
     json_config = json.dumps(config)
     prefix = args.prefix

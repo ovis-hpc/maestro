@@ -122,10 +122,18 @@ updaters:
     - regex : .*
   
 stores :
-  - name      : sos
+  - name      : sos-meminfo        # Storage policy names are unique
     group     : l3-agg
     container : ldms_data
     schema    : meminfo
+    plugin :
+      name   : store_sos
+      config : { path : /DATA15/sos/orion }
+
+  - name      : sos-vmstat
+    group     : l3-agg
+    container : ldms-data
+    schema    : vmstat
     plugin :
       name   : store_sos
       config : { path : /DATA15/sos/orion }
