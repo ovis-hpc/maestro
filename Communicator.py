@@ -238,9 +238,13 @@ class Communicator(object):
         - The plugin name
 
         Keyword Parameters:
-        - dictionary of plugin specific key/value paris
+        - dictionary of plugin specific key/value pairs
         """
-        cfg_str = 'config name='+name+' '+self.args_to_cfg_str(**args)
+        cfg_str = ''
+        for key in args:
+            if len(cfg_str):
+                cfg_str += ' '
+            cfg_str += key + '=' + args[key]
         req = LDMSD_Request(
                 command_id=LDMSD_Request.PLUGN_CONFIG,
                 attrs=[ LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name),
@@ -253,7 +257,31 @@ class Communicator(object):
         except Exception:
             self.close()
             return errno.ENOTCONN, None
-        
+
+    def plugn_stop(self, name):
+        """
+        Stop a LDMSD Plugin
+
+        Parameters:
+        - The plugin name
+        Returns:
+        A tuple of status, data
+        - status is an errno from the errno module
+        - data is an error message if status != 0 or None
+        """
+        req = LDMSD_Request(
+                command_id=LDMSD_Request.PLUGN_STOP,
+                attrs=[
+                    LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name)
+                ])
+        try:
+            req.send(self)
+            resp = req.receive(self)
+            return resp['errcode'], resp['msg']
+        except Exception as e:
+            self.close()
+            return errno.ENOTCONN, None
+
     def smplr_load(self, name):
         """
         Load an LDMSD sampler plugin.

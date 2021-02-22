@@ -92,35 +92,35 @@ producers:
       - l3-all
 
 
-updaters:            
-- name  : all           # must be unique within group
-  group : l1-agg
-  interval : "1.0s:0ms"
-  sets :
-    - regex : .*        # regular expression matching set name or schema
-      field : inst      # 'instance' or 'schema'
-  producers :
-    - regex : .*        # regular expression matching producer name
+updaters:
+  - name  : all           # must be unique within group
+    group : l1-agg
+    interval : "1.0s:0ms"
+    sets :
+      - regex : .*        # regular expression matching set name or schema
+        field : inst      # 'instance' or 'schema'
+    producers :
+      - regex : .*        # regular expression matching producer name
                         # this is evaluated on the Aggregator, not
                         # at configuration time'
-- name  : all
-  group : l2-agg
-  interval : "1.0s:250ms"
-  sets :
-    - regex : .*
-      field : inst
-  producers :
-    - regex : .*
+  - name  : all
+    group : l2-agg
+    interval : "1.0s:250ms"
+    sets :
+      - regex : .*
+        field : inst
+    producers :
+      - regex : .*
 
-- name  : all
-  group : l3-agg
-  interval : "1.0s:500ms"
-  sets :
-    - regex : .*
-      field : inst
-  producers :
-    - regex : .*
-  
+  - name  : all
+    group : l3-agg
+    interval : "1.0s:500ms"
+    sets :
+      - regex : .*
+        field : inst
+    producers :
+      - regex : .*
+
 stores :
   - name      : sos-meminfo        # Storage policy names are unique
     group     : l3-agg

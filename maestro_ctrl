@@ -13,7 +13,6 @@ import threading, queue
 import time
 from collections import Mapping, Set, Sequence
 from Communicator import Communicator
-from IPython.core.debugger import set_trace
 
 class Cluster(object):
     def emit_value(self, path, value):
@@ -295,6 +294,7 @@ class Cluster(object):
         self.walk(self.producers, '/' + self.name + '/producers')
         self.walk(self.updaters, '/' + self.name + '/updaters')
         self.walk(self.stores, '/' + self.name + '/stores')
+        self.client.put('/'+self.name+'/last_updated', str(time.time()))
 
     def config_v4(self):
         """Read the group configuration from ETCD and generate a version 4 LDMSD configuration"""
@@ -309,45 +309,6 @@ class Cluster(object):
         elif version == 5:
             return self.config_v5()
         raise ValueError("Version {0} is not recognized".format(version))
-
-def load_config(client, key_prefix):
-    """
-    Build a configuration dictionary from the k,v
-    in the ETCD store
-    """
-    pfx = key_prefix
-    if pfx[0] != '/':
-        pfx = '/' + key_prefix
-    config = {}
-    kv_config = client.get_prefix(pfx)
-    for v, m in kv_config:
-        path = m.key.decode('utf-8')
-        s = path.split('/')
-        if len(s[0]) == 0:
-            # if path begins with '/' strip 1st value
-            s = s[1:]
-        cfg = config
-        for i in range(0, len(s[:-1])):
-            d = s[i]
-            if d.isdigit():
-                # This is a list entry, append a new dictionary if necessary
-                if len(cfg) <= int(d):
-                    cfg.append({})
-                cfg = cfg[int(d)]
-            else:
-                if d not in cfg:
-                    # look ahead to see if we are adding a dictionary or a list
-                    if s[i+1].isdigit():
-                        cfg[d] = []
-                    else:
-                        cfg[d] = {}
-                cfg = cfg[d]
-        if isinstance(cfg, list):
-            cfg.append(v.decode('utf-8'))
-        else:
-            cfg[s[-1]] = v.decode('utf-8')
-    # json_config = json.dumps(config)
-    return config
 
 def expand_names(name_spec):
     if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
@@ -532,13 +493,12 @@ def query_ldmsd_state(client, comms):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="LDMS Monitoring Cluster Manager")
+        description="LDMS Monitoring Cluster Configuration")
     parser.add_argument("--cluster", metavar="FILE", required=True,
                         help="The name of the etcd cluster configuration file")
-    parser.add_argument("--ldms_config", metavar="FILE", required=False,
-                        help="The load balance domain configuration file. "
-                        "If specified, this will reload the global ldms cluster "
-                        "configuration database. This will not start the maestro "
+    parser.add_argument("--ldms_config", metavar="FILE", required=True,
+                        help="The ldmsd load balance domain configuration file. "
+                        "This will not start the maestro "
                         "load balancer")
     parser.add_argument("--prefix", metavar="STRING", required=True,
                         help="The prefix for the dumped aggregator configurations",
@@ -565,22 +525,6 @@ if __name__ == "__main__":
 
     # All keys in the DB are prefixed with the cluster name, 'pfx'. So we can
     # have multiple monitoring hosted by the same consensus cluster.
-
-    # Load the monitoring cluster configuration. This specifes the
-    # names of all of the nodes being monitored and the metric sets
-    # gathered
-    
-    config = load_config(client, args.prefix)
-    json_config = json.dumps(config)
-    prefix = args.prefix
-    if prefix[0] == '/':
-        prefix = prefix[1:]
-    hosts = config[prefix]['hosts']
-    samplers = config[prefix]['samplers']
-    producers = config[prefix]['producers']
-    aggregators = config[prefix]['aggregators']
-    updaters = config[prefix]['updaters']
-  
     config_fp = open(args.ldms_config)
     conf_spec = yaml.safe_load(config_fp)
     # blow away the existing configuration
