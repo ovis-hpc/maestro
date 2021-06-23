@@ -13,10 +13,9 @@ import threading, queue
 import time
 from collections import Mapping, Set, Sequence
 from Communicator import Communicator
-from IPython.core.debugger import set_trace
 
 def agg_hosts(grp_name, aggs, hosts):
-    return [ hosts[a['host']] for a in aggs[grp_name] ]
+    return [ hosts[a['endpoint']] for a in aggs[grp_name] ]
 
 def sampler_hosts(ldmsds, hosts):
     return [ hosts[a] for a in ldmsds ]
@@ -82,7 +81,8 @@ class MaestroMonitor(object):
         self.reset_conf()
         self.comms = self.build_agg_comms()
         self.etcd_event_handler = {
-            'hosts'       : self.__reconf_hosts,
+            'endpoints'   : self.__reconf_endpoints,
+            'daemons'     : self.__reconf_daemons,
             'aggregators' : self.__reconf_aggregators,
             'producers'   : self.__reconf_producers,
             'samplers'    : self.__reconf_samplers,
@@ -91,7 +91,7 @@ class MaestroMonitor(object):
         }
 
     def reset_conf(self):
-        self.hosts = self.config[self.prefix]['hosts']
+        self.endpoints = self.config[self.prefix]['endpoints']
         self.samplers = self.config[self.prefix]['samplers']
         self.producers = self.config[self.prefix]['producers']
         self.aggregators = self.config[self.prefix]['aggregators']
@@ -101,7 +101,7 @@ class MaestroMonitor(object):
         comms = {}
         for grp_name in self.aggregators:
             comms[grp_name] = {}
-            for agg_host in agg_hosts(grp_name, self.aggregators, self.hosts):
+            for agg_host in agg_hosts(grp_name, self.aggregators, self.endpoints):
                 if self.args.start_aggregators:
                     # For now create log and pid files in log subdirectory
                     subprocess.run(['ldmsd',
@@ -157,7 +157,10 @@ class MaestroMonitor(object):
                 cfg[s[-1]] = v.decode('utf-8')
         return config
 
-    def __reconf_hosts(self, config):
+    def __reconf_endpoints(self, config):
+        pass
+
+    def __reconf_daemons(self, config):
         pass
 
     def __reconf_aggregators(self, config):
@@ -167,7 +170,7 @@ class MaestroMonitor(object):
         pass
 
     def __reconf_samplers(self, config):
-        restart_samplers(self.samplers, self.hosts, config)
+        restart_samplers(self.samplers, self.endpoints, config)
         print("Sampler's reconfigured")
 
     def __reconf_stores(self, config):
@@ -181,6 +184,10 @@ class MaestroMonitor(object):
         Re-build the config for each of the load balance groups
         """
         groups = {}
+        if 'dameons' in self.config[self.prefix]:
+            self.daemons = self.config[self.prefix]['daemons']
+        else:
+            self.daemons = {}
         if 'producers' in self.config[self.prefix]:
             self.producers = self.config[self.prefix]['producers']
         else:
@@ -226,14 +233,14 @@ class MaestroMonitor(object):
                     remainder -= 1
                 groups[group].append({ "aggregator" : agg, "producers" : agg_prods })
 
-        start_samplers(self.samplers, self.hosts) 
+        start_samplers(self.samplers, self.endpoints) 
         # Add all the producers to the aggregators. Any error here is not an issue
         # because all aggs have all producers, although, not all producers are started.
-        add_producers(self.comms, self.producers, self.aggregators, agg_state, self.hosts)
+        add_producers(self.comms, self.producers, self.aggregators, agg_state, self.endpoints)
 
         # Add all the updaters and storage policies
-        add_updaters(self.comms, self.updaters, self.aggregators, agg_state, self.hosts)
-        add_stores(self.comms, self.stores, self.aggregators, agg_state, self.hosts)
+        add_updaters(self.comms, self.updaters, self.aggregators, agg_state, self.endpoints)
+        add_stores(self.comms, self.stores, self.aggregators, agg_state, self.endpoints)
 
         # Start the producers assigned to each of the Aggregators
         start_producers(self.comms, groups)
@@ -391,7 +398,7 @@ def restart_samplers(samplers, hosts, config):
                     continue
     return True
 
-def add_producers(comms, producers, aggregators, agg_state, hosts):
+def add_producers(comms, producers, aggregators, agg_state, endpoints):
     """Add producers to Aggregators
 
     Producers are added to all Aggregators in the group. They
@@ -408,7 +415,7 @@ def add_producers(comms, producers, aggregators, agg_state, hosts):
         prod_dict = { prod['name'] : prod for prod in producers[grp_name] }
 
         # Query the producer list on each aggregator in the group
-        for agg_host in agg_hosts(grp_name, aggregators, hosts):
+        for agg_host in agg_hosts(grp_name, aggregators, endpoints):
             agg_name = agg_host['name']
             if agg_state[agg_name] != 'ready':
                 continue
@@ -423,13 +430,13 @@ def add_producers(comms, producers, aggregators, agg_state, hosts):
             print(f"Adding {len(add_prods)} producers to agg {agg_name}")
             for prod_name in add_prods:
                 prod = prod_dict[prod_name]
-                host_name = prod['host']
-                host = hosts[host_name]
+                ep_name = prod['endpoint']
+                endpoint = endpoints[ep_name]
                 interval_s = prod['reconnect']
                 interval_us=cvt_intrvl_str_to_us(interval_s)
                 comm.prdcr_add(
                             prod_name, prod['type'],
-                            host['xprt'], host['addr'], host['port'],
+                            endpoint['xprt'], endpoint['addr'], endpoint['port'],
                             interval_us)
     return True
 

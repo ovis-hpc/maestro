@@ -44,11 +44,11 @@ class Cluster(object):
                 raise ValueError("The '{0}' attribute is required in a {1}".
                                  format(name, container_name))
 
-    def build_hosts(self, config):
-        """Generate a host spec list from YAML config
+    def build_endpoints(self, config):
+        """Generate an endpoint spec list from YAML config
 
-        Builds a dictionary of host definitions. The 'config' is a
-        list of host specifications. Each host specification contains
+        Builds a dictionary of endpoint definitions. The 'config' is a
+        list of endpoint specifications. Each endpoint specification contains
         'name', 'host', and 'port' attributes. All attributes are
         expanded per the slurm hostlist rules. The length of the
         expanded name-list, must equal the length of the expanded
@@ -70,11 +70,11 @@ class Cluster(object):
         }
 
         """
-        host_dict = {}
-        if 'hosts' not in config:
-            return host_dict
+        ep_dict = {}
+        if 'endpoints' not in config:
+            return ep_dict
 
-        node_config = config['hosts']
+        node_config = config['endpoints']
         for spec in node_config:
             self.check_required([ 'names', 'hosts', 'ports' ],
                                 spec, "host specification")
@@ -108,9 +108,31 @@ class Cluster(object):
                         'xprt' : xprt,
                         'auth' : { 'name' : auth_name, 'config' : auth_config }
                     }
-                    host_dict[name] = h
+                    ep_dict[name] = h
 
-        return host_dict
+        return ep_dict
+
+    def build_daemons(self, config):
+        daemons = {}
+        if 'daemons' not in config:
+            return daemons
+        daemon_conf = config['daemons']
+        for daemon_spec in daemon_conf:
+            self.check_required(['names', 'group', 'interfaces'],
+                                daemon_spec, "daemon specification")
+            names = expand_names(daemon_spec['names'])
+            group = daemon_spec['group']
+            if group not in daemons:
+                daemons[group] = []
+            interfaces = daemon_spec['interfaces']
+            for name in names:
+                daemon = {
+                    'name'       : name,
+                    'group'      : group,
+                    'interfaces' : interfaces
+                }
+                daemons[group].append(daemon)
+        return daemons
 
     def build_aggregators(self, config):
         aggregators = {}
@@ -119,23 +141,23 @@ class Cluster(object):
 
         agg_conf = config['aggregators']
         for agg_spec in agg_conf:
-            self.check_required([ 'names', 'group', 'hosts' ],
+            self.check_required([ 'names', 'group', 'endpoints' ],
                                 agg_spec, "aggregator specification")
 
             names = expand_names(agg_spec['names'])
             group = agg_spec['group']
             if group not in aggregators:
                 aggregators[group] = []
-            hosts = expand_names(agg_spec['hosts'])
-            if len(names) != len(hosts):
+            endpoints = expand_names(agg_spec['endpoints'])
+            if len(names) != len(endpoints):
                 raise ValueError('"aggregators:" The "host" and "name" specifications must '
                                 'expand to the same number of names')
             for name in names:
-                host = hosts.pop(0)
+                endpoint = endpoints.pop(0)
                 agg = {
-                        'name'  : name,
-                        'host'  : host,
-                        'state' : 'stopped' # 'running', 'error'
+                        'name'      : name,
+                        'endpoint'  : endpoint,
+                        'state'     : 'stopped' # 'running', 'error'
                 }
                 aggregators[group].append(agg)
         return aggregators
@@ -148,16 +170,16 @@ class Cluster(object):
         producers = {}
         prod_spec = config['producers']
         for prod in prod_spec:
-            self.check_required([ 'names', 'hosts', 'updaters',
+            self.check_required([ 'names', 'endpoints', 'updaters',
                                 'reconnect', 'type', 'group' ],
                                 prod, '"producer" entry')
             names = expand_names(prod['names'])
-            hosts = expand_names(prod['hosts'])
+            endpoints = expand_names(prod['endpoints'])
             group = prod['group']
             if group not in producers:
                 producers[group] = []
 
-            if len(names) != len(hosts):
+            if len(names) != len(endpoints):
                 raise ValueError('"producer": The "host" and "name" specifications must '
                                 'expand to the same number of strings')
             upd_spec = prod['updaters']
@@ -166,10 +188,10 @@ class Cluster(object):
             typ = prod['type']
             reconnect = prod['reconnect']
             for name in names:
-                host = hosts.pop(0)
+                endpoint = endpoints.pop(0)
                 prod = {
                     'name'      : name,
-                    'host'      : host,
+                    'endpoint'  : endpoint,
                     'type'      : typ,
                     'group'     : group,
                     'reconnect' : reconnect,
@@ -258,8 +280,9 @@ class Cluster(object):
         """
         self.client = client
         self.name = name
-        self.hosts = self.build_hosts(cluster_config)
+        self.endpoints = self.build_endpoints(cluster_config)
         self.aggregators = self.build_aggregators(cluster_config)
+        self.daemons = self.build_daemons(cluster_config)
         self.producers = self.build_producers(cluster_config)
         self.updaters = self.build_updaters(cluster_config)
         self.stores = self.build_stores(cluster_config)
@@ -288,8 +311,9 @@ class Cluster(object):
 
     def save_config(self):
         self.client.delete_prefix('/' + self.name)
-        self.walk(self.hosts, '/' + self.name + '/hosts')
+        self.walk(self.endpoints, '/' + self.name + '/endpoints')
         self.walk(self.aggregators, '/' + self.name + '/aggregators')
+        self.walk(self.daemons, '/' + self.name + '/daemons')
         self.walk(self.samplers, '/' + self.name + '/samplers')
         self.walk(self.producers, '/' + self.name + '/producers')
         self.walk(self.updaters, '/' + self.name + '/updaters')
@@ -356,7 +380,7 @@ def cvt_intrvl_str_to_us(interval_s):
     return int(mult * factor)
 
 def agg_hosts(grp_name, aggs, hosts):
-    return [ hosts[a['host']] for a in aggs[grp_name] ]
+    return [ hosts[a['endpoint']] for a in aggs[grp_name] ]
 
 def sampler_hosts(ldmsds, hosts):
     return [ hosts[a] for a in ldmsds ]
