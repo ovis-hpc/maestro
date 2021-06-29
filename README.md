@@ -67,9 +67,10 @@ members:
 And here is an example of a LDMS Cluster Configuration File:
 
 ```yaml
-hosts:
-  - names : &sampler-hosts "nid[00012-00200]"
-    hosts : "nid[00012-00200]"
+endpoints:
+  - names : &sampler-endpoints "nid[00012-00200]"
+    group : samplers
+    hosts : &sampler-hosts "nid[00012-00200]"
     ports : "10001"
     xprt : sock
     auth :
@@ -77,8 +78,9 @@ hosts:
       config  :
           domain : samplers
 
-  - names : &l1-agg-hosts "agg-[11-14]"
-    hosts : "nid00002"
+  - names : &l1-agg-endpoints "agg-[11-14]"
+    group : &l1 "l1-agg"
+    hosts : &l1-agg-hosts "nid00002"
     ports : "[30011-30014]"
     xprt : sock
     auth :
@@ -86,8 +88,9 @@ hosts:
       config  :
         domain : aggregators
 
-  - names : &l2-agg-hosts "agg-[21,22]"
-    hosts : "nid00003"
+  - names : &l2-agg-endpoints "agg-[21,22]"
+    group : &l2 "l2-agg"
+    hosts : &l2-agg-hosts "nid00003"
     ports : "[30021,30022]"
     xprt : sock
     auth :
@@ -95,8 +98,9 @@ hosts:
       config  :
         domain : aggregators
 
-  - names : &l3-agg-hosts "agg-31"
-    hosts : "nid00004"
+  - names : &l3-agg-endpoints "agg-31"
+    group : &l3 "l3-agg"
+    hosts : &l3-agg-hosts "nid00004"
     ports : "30031"
     xprt : sock
     auth :
@@ -104,36 +108,56 @@ hosts:
       config  :
         domain : users
 
+groups:
+  - endpoints : *sampler-endpoints
+    name : samplers
+    interfaces :
+      - *sampler-hosts
+
+  - endpoints : *l1-agg-endpoints
+    name : *l1
+    interfaces :
+      - *sampler-hosts
+      - *l1-agg-endpoints
+      - *l2-agg-endpoints
+
+  - endpoints : *l2-agg-endpoints
+    name : *l2
+    interfaces :
+      - *l1-agg-endpoints
+      - *l2-agg-endpoints
+
 aggregators:
-  - names : *l1-agg-hosts
-    hosts : *l1-agg-hosts
-    group : l1-agg
+  - names     : *l1-agg-endpoints
+    endpoints : *l1-agg-endpoints
+    group     : *l1
 
-  - names : *l2-agg-hosts
-    hosts : *l2-agg-hosts
-    group: l2-agg
+  - names     : *l2-agg-endpoints
+    endpoints : *l2-agg-endpoints
+    group     : *l2
 
-  - names : agg-31
-    hosts : "agg-31"
-    group : l3-agg
+  - names     : *l3-agg-endpoints
+    endpoints : *l3-agg-hosts*
+    group     : *l3
 
 samplers:
-  - names       : *sampler-hosts
+  - names       : *sampler-endpoints
+    group : samplers
     config :
       - name        : meminfo # Variables can be specific to plugin
-        interval    : "1.0s:0ms" # Interval:offset format. Used when starting the sampler plugin
+        interval    : "1.0s:0ms" # Interval:offset format. Used when starting the plugin
         perm        : "0777"
 
       - name        : vmstat
-        interval    : "1.0s:0ms" # Interval:offset format. Used when starting the sampler plugin
+        interval    : "1.0s:0ms" # Interval:offset format. Used when starting the plugin
         perm        : "0777"
 
 producers:
 # This informs the L1 load balance group what is being distributed across
 # the L1 aggregator nodes
-  - names     : *sampler-hosts
-    hosts     : *sampler-hosts
-    group     : l1-agg
+  - names     : *sampler-endpoints
+    endpoints : *sampler-endpoints
+    group     : *l1
     reconnect : 20s
     type      : active
     updaters  :
@@ -141,9 +165,9 @@ producers:
 
 # This informs the L2 load balance group what is being distributed across
 # the L2 aggregator nodes
-  - names      : *l1-agg-hosts
-    hosts      : *l1-agg-hosts
-    group      : l2-agg
+  - names      : *l1-agg-endpoints
+    endpoints  : *l1-agg-endpoints
+    group      : *l2
     reconnect  : 20s
     type       : active
     updaters   :
@@ -151,9 +175,9 @@ producers:
 
 # This informs the L3 load balance group what is being distributed across
 # the L3 aggregator node
-  - names      : *l2-agg-hosts    # is this really needed?
-    hosts      : *l2-agg-hosts
-    group      : l3-agg
+  - names      : *l2-agg-endpoints
+    endpoints  : *l2-agg-endpoints
+    group      : *l3
     reconnect  : 20s
     type       : active
     updaters  :
@@ -162,7 +186,7 @@ producers:
 
 updaters:
 - name  : all           # must be unique within group
-  group : l1-agg
+  group : *l1
   interval : "1.0s:0ms"
   sets :
     - regex : .*        # regular expression matching set name or schema
@@ -172,7 +196,7 @@ updaters:
                         # this is evaluated on the Aggregator, not
                         # at configuration time'
 - name  : all
-  group : l2-agg
+  group : *l2
   interval : "1.0s:250ms"
   sets :
     - regex : .*
@@ -181,7 +205,7 @@ updaters:
     - regex : .*
 
 - name  : all
-  group : l3-agg
+  group : *l3
   interval : "1.0s:500ms"
   sets :
     - regex : .*
@@ -189,5 +213,44 @@ updaters:
   producers :
     - regex : .*
 
+stores :
+  - name      : sos-meminfo
+    group     : *l3
+    container : ldms_data
+    schema    : meminfo
+    plugin :
+      name   : store_sos
+      config : { path            : /DATA15/orion,
+                 commit_interval : 600
+      }
+
+  - name      : sos-vmstat
+    group     : *l3
+    container : ldms_data
+    schema    : vmstat
+    plugin :
+      name   : store_sos
+      config : { path : /DATA15/orion }
+
+  - name      : sos-procstat
+    group     : *l3
+    container : ldms_data
+    schema    : procstat
+    plugin :
+      name   : store_sos
+      config : { path : /DATA15/orion }
+
+  - name : csv
+    group     : *l3
+    container : ldms_data
+    schema    : meminfo
+    plugin :
+      name : store_csv
+      config :
+        path        : /DATA15/orion/csv/orion
+        altheader   : 0
+        typeheader  : 1
+        create_uid  : 3031
+        create_gid  : 3031
 ```
 

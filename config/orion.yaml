@@ -1,151 +1,152 @@
-hosts:
-  - names : &sampler-hosts "orion-[01-08]-[10001-10128]"
-    hosts : "orion-[01-08]"
-    ports : "[10001-10128]"
+endpoints:
+  - names : &sampler-endpoints "orion-[01-08]-[10002]"
+    group : samplers
+    hosts : &sampler-hosts "orion-[01-08]"
+    ports : &sampler-ports "[10002]"
     xprt : sock
     auth :
       name  : munge
       config  :
         domain : samplers
 
-  - names : &l1-agg-hosts "agg-[11-14]"
-    hosts : "ovs-5416"
-    ports : "[10011-10014]"
+  - names : &l1-agg-endpoints "agg[1-3]" 
+    group : &l1-agg "l1-agg"
+    hosts : &agg-host "ovs-5416"
+    ports : "[10101-10103]"
     xprt : sock
     auth :
       name  : munge
       config  :
         domain : aggregators
 
-  - names : &l2-agg-hosts "agg-[21,22]"
-    hosts : "ovs-5416"
-    ports : "[10021,10022]"
-    xprt : sock
-    auth :
-      name  : munge
-      config  :
-        domain : aggregators
-
-  - names : &l3-agg-hosts "agg-31"
-    hosts : "ovs-5416"
-    ports : "10031"
+  - names : &l2-agg-endpoints "agg-4"
+    group : &l2-agg "l2-agg"
+    hosts : *agg-host
+    ports : "10104"
     xprt : sock
     auth :
       name  : munge
       config  :
         domain : users
 
+groups:
+  - endpoints : *sampler-endpoints
+    name : samplers
+    interfaces : 
+      - *sampler-hosts
+
+  - endpoints : *l1-agg-endpoints
+    name : *l1-agg
+    interfaces : 
+      - *sampler-hosts
+      - *l1-agg-endpoints
+      - *l2-agg-endpoints
+
+  - endpoints : *l2-agg-endpoints
+    name : *l2-agg
+    interfaces :
+      - *l1-agg-endpoints
+      - *l2-agg-endpoints
+
 aggregators:
-  - names : *l1-agg-hosts
-    hosts : *l1-agg-hosts
-    group : l1-agg
+  - names     : *l1-agg-endpoints
+    endpoints : *l1-agg-endpoints
+    group     : *l1-agg
 
-  - names : *l2-agg-hosts
-    hosts : *l2-agg-hosts
-    group: l2-agg
-
-  - names : agg-31
-    hosts : "agg-31"
-    group : l3-agg
-
-samplers:
-# This is the configuration for the LDMS sampler daemons
-  - names       : *sampler-hosts
-    config :
-      - name        : meminfo
-        interval    : "1.0s:0ms" # Format is interval:offset
-        perms       : "0777"
-
-      - name        : vmstat
-        interval    : "1.0s:0ms"
-        perms       : "0777"
+  - names     : *l2-agg-endpoints
+    endpoints : *l2-agg-endpoints
+    group     : *l2-agg
 
 producers:
 # This informs the L1 load balance group what is being distributed across
 # the L1 aggregator nodes
-  - names     : *sampler-hosts
-    hosts     : *sampler-hosts
-    group     : l1-agg
+  - names     : *sampler-endpoints
+    endpoints : *sampler-endpoints
+    group     : *l1-agg
     reconnect : 20s
     type      : active
     updaters  :
       - l1-all
 
-# This informs the L2 load balance group what is being distributed across
-# the L2 aggregator nodes
-  - names      : *l1-agg-hosts
-    hosts      : *l1-agg-hosts
-    group      : l2-agg
-    reconnect  : 20s
-    type       : active
-    updaters   :
+  - names     : *l1-agg-endpoints
+    endpoints : *l1-agg-endpoints
+    group     : *l2-agg
+    reconnect : 20s
+    type      : active
+    updaters  :
       - l2-all
 
-# This informs the L3 load balance group what is being distributed across
-# the L3 aggregator node
-  - names      : *l2-agg-hosts    # is this really needed?
-    hosts      : *l2-agg-hosts
-    group      : l3-agg 
-    reconnect  : 20s
-    type       : active
-    updaters  :
-      - l3-all
+samplers:
+  - names       : *sampler-endpoints
+    group : samplers
+    config :
+      - name        : meminfo # Variables can be specific to plugin
+        interval    : "1.0s:0ms" # Interval:offset format. Used when starting the sampler plugin
+        perm        : "0777"
 
+      - name        : vmstat
+        interval    : "1.0s:0ms"
+        perm        : "0777"
 
-updaters:
-  - name  : all           # must be unique within group
-    group : l1-agg
-    interval : "1.0s:0ms"
-    sets :
-      - regex : .*        # regular expression matching set name or schema
-        field : inst      # 'instance' or 'schema'
-    producers :
-      - regex : .*        # regular expression matching producer name
+      - name        : procstat
+        interval    : "1.0s:0ms"
+        perm        : "0777"
+
+updaters:            
+- name  : all           # must be unique within group
+  group : *l1-agg
+  interval : "1.0s:0ms"
+  sets :
+    - regex : .*        # regular expression matching set name or schema
+      field : inst      # 'instance' or 'schema'
+  producers :
+    - regex : .*        # regular expression matching producer name
                         # this is evaluated on the Aggregator, not
                         # at configuration time'
-  - name  : all
-    group : l2-agg
-    interval : "1.0s:250ms"
-    sets :
-      - regex : .*
-        field : inst
-    producers :
-      - regex : .*
-
-  - name  : all
-    group : l3-agg
-    interval : "1.0s:500ms"
-    sets :
-      - regex : .*
-        field : inst
-    producers :
-      - regex : .*
+- name  : all           # must be unique within group
+  group : *l2-agg
+  interval : "1.0s:0ms"
+  sets :
+    - regex : meminfo        # regular expression matching set name or schema
+      field : inst      # 'instance' or 'schema'
+  producers :
+    - regex : .*
 
 stores :
-  - name      : sos-meminfo        # Storage policy names are unique
-    group     : l3-agg
+  - name      : sos-meminfo
+    group     : *l2-agg
     container : ldms_data
     schema    : meminfo
     plugin :
       name   : store_sos
-      config : { path : /DATA15/sos/orion }
+      config : { path            : /DATA15/orion,
+                 commit_interval : 600
+      }
 
   - name      : sos-vmstat
-    group     : l3-agg
-    container : ldms-data
+    group     : *l2-agg
+    container : ldms_data
     schema    : vmstat
     plugin :
       name   : store_sos
-      config : { path : /DATA15/sos/orion }
+      config : { path : /DATA15/orion }
+
+  - name      : sos-procstat
+    group     : *l2-agg
+    container : ldms_data
+    schema    : procstat
+    plugin :
+      name   : store_sos
+      config : { path : /DATA15/orion }
 
   - name : csv
-    group     : l3-agg
+    group     : *l2-agg
     container : ldms_data
     schema    : meminfo
     plugin :
       name : store_csv
       config :
-        path        : /DATA15/csv/orion
+        path        : /DATA15/orion/csv/orion
         altheader   : 0
         typeheader  : 1
         create_uid  : 3031
