@@ -314,7 +314,7 @@ class Cluster(object):
         self.client.put('/'+self.name+'/last_updated', str(time.time()))
 
     def parse_to_cfg_str(self, cfg_obj):
-        cfg_str = 'config '
+        cfg_str = ''
         for key in cfg_obj:
             if key != 'interval':
                 if len(cfg_str) > 8:
@@ -344,55 +344,80 @@ class Cluster(object):
                         interval = cvt_intrvl_str_to_us(sampler['interval'].split(':')[0])
                         offset = cvt_intrvl_str_to_us(sampler['interval'].split(':')[1])
                         fd.write(f'load name={sname}\n')
-                        fd.write(f'{cfg_str} producer=${{HOSTNAME}} '+
+                        fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
                                  f'component_id=${{COMPONENT_ID}} '+
                                  f'instance=${{HOSTNAME}}/{sname}\n')
                         fd.write(f'start name={sname} interval={interval} offset={offset}\n')
+                fd.close()
             except Exception as e:
                 a, b, d = sys.exc_info()
-                print(str(e) + str(d.tb_lineno))
+                print(f'Error generating sampler configuration: {str(e)} {str(d.tb_lineno)}')
                 return errno.EINVAL
 
             # Agg config
             try:
-                if group_name in self.producers:
-                    prod_group = self.producers[group_name]
-                    for producer in prod_group:
-                        pname = producer['name']
-                        port = self.endpoints[producer['endpoint']]['port']
-                        xprt = self.endpoints[producer['endpoint']]['xprt']
-                        hostname = self.endpoints[producer['endpoint']]['addr']
-                        ptype = producer['type']
-                        interval = cvt_intrvl_str_to_us(producer['reconnect'])
-                        fd.write(f'prdcr_add name={pname} '+
-                                 f'host={hostname} '+
-                                 f'port={port} '+
-                                 f'xprt={xprt} type={ptype} interval={interval}\n')
-                    fd.write('prdcr_start_regex regex=.*\n')
-                if group_name in self.updaters:
-                    updtr_group = self.updaters[group_name]
-                    for updtr in updtr_group:
-                        interval = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'].split(':')[0])
-                        offset = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'].split(':')[1])
-                        fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
-                                 f'interval={interval} offset={offset} auto_interval=true\n')
-                        for prod in updtr_group[updtr]['producers']:
-                            fd.write(f'updtr_prdcr_add name={updtr_group[updtr]["name"]} '+
-                                     f'regex={prod["regex"]}\n')
-                        fd.write(f'updtr_start name={updtr_group[updtr]["name"]}\n')
-                if group_name in self.stores:
-                    store_group = self.stores[group_name]
-                    for store in store_group:
-                        fd.write(f'load name={store_group[store]["plugin"]["name"]}\n')
-                        fd.write(f'{self.parse_to_cfg_str(store_group[store]["plugin"]["config"])}\n')
-                        fd.write(f'strgp_add name={store} plugin={store_group[store]["plugin"]["name"]} '+
-                                 f'container={store_group[store]["container"]} '+
-                                 f'schema={store_group[store]["schema"]} '+
-                                 f'flush=60s\n')
-                        fd.write(f'strgp_start name={store}\n')
+                ''' "Balance" agg configuration if all samplers are included in each aggregator '''
+                if group_name not in self.aggregators:
+                    continue
+                last_sampler = None
+                for agg in self.aggregators[group_name]:
+                    fd = open(f'{path}/{group_name}-{agg["name"]}.conf', 'w+')
+                    if group_name in self.producers:
+                        ''' Balance samplers across aggregators '''
+                        prdcrs = []
+                        loop = round(len(self.producers[group_name]) / len(self.aggregators[group_name]))
+                        for prdcr in self.producers[group_name]:
+                            prdcrs.append(prdcr["name"])
+                        if not last_sampler:
+                            idx = 0
+                        else:
+                            idx = prdcrs.index(last_sampler) + 1
+                        prod_group = self.producers[group_name][idx:]
+                        i = 0
+                        for producer in prod_group:
+                            if i >= loop:
+                                break
+                            pname = producer['name']
+                            port = self.endpoints[producer['endpoint']]['port']
+                            xprt = self.endpoints[producer['endpoint']]['xprt']
+                            hostname = self.endpoints[producer['endpoint']]['addr']
+                            ptype = producer['type']
+                            interval = cvt_intrvl_str_to_us(producer['reconnect'])
+                            fd.write(f'prdcr_add name={pname} '+
+                                     f'host={hostname} '+
+                                     f'port={port} '+
+                                     f'xprt={xprt} type={ptype} interval={interval}\n')
+                            last_sampler = pname
+                            i += 1
+                        fd.write('prdcr_start_regex regex=.*\n')
+                    if group_name in self.updaters:
+                        updtr_group = self.updaters[group_name]
+                        for updtr in updtr_group:
+                            interval = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'].split(':')[0])
+                            offset = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'].split(':')[1])
+                            fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
+                                     f'interval={interval} offset={offset} auto_interval=true\n')
+                            for prod in updtr_group[updtr]['producers']:
+                                fd.write(f'updtr_prdcr_add name={updtr_group[updtr]["name"]} '+
+                                         f'regex={prod["regex"]}\n')
+                            fd.write(f'updtr_start name={updtr_group[updtr]["name"]}\n')
+                    if group_name in self.stores:
+                        store_group = self.stores[group_name]
+                        loaded_plugins = []
+                        for store in store_group:
+                            if store_group[store]["plugin"]["name"] not in loaded_plugins:
+                                fd.write(f'load name={store_group[store]["plugin"]["name"]}\n')
+                                fd.write(f'config name={store_group[store]["plugin"]["name"]} '+
+                                         f'{self.parse_to_cfg_str(store_group[store]["plugin"]["config"])}\n')
+                                loaded_plugins.append(store_group[store]["plugin"]["name"])
+                            fd.write(f'strgp_add name={store} plugin={store_group[store]["plugin"]["name"]} '+
+                                     f'container={store_group[store]["container"]} '+
+                                     f'schema={store_group[store]["schema"]} '+
+                                     f'flush=60s\n')
+                            fd.write(f'strgp_start name={store}\n')
             except Exception as e:
                 ea, eb, ec = sys.exc_info()
-                print(str(e)+str(ec.tb_lineno))
+                print('Agg config Error: '+str(e)+' Line:'+str(ec.tb_lineno))
 
     def config_v5(self):
         pass

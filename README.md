@@ -24,6 +24,16 @@ daemons, however, this feature is planned for the future.
 etcd3 can be downlaoded via pip3, or from source at:
 https://github.com/etcd-io/etcd
 
+## Configuration Generation
+A ldms cluster's configuration can be generated with the maestro_ctrl
+command. The current implementation of the generator will generate 
+ldmsd configuration files for each group in the ldmsd cluster config.
+The generator will automatically "balance" samplers across aggregators,
+if sampler's are loaded by multiple aggregators, effectively creating
+a unique configuration file for each aggregator in a group.
+ The command to generate config files is listed below:
+	maestro_ctrl --cluster config/etcd.yaml --ldms_config config/ldms-config.yaml --prefix <cluster_name> --generate-config-path <config_directory_path>
+
 ## Configuration Management
 
 A cluster's configuration is mangaged in a distributed RAFT based
