@@ -279,7 +279,10 @@ class Cluster(object):
         self.producers = self.build_producers(cluster_config)
         self.updaters = self.build_updaters(cluster_config)
         self.stores = self.build_stores(cluster_config)
-        self.samplers = self.build_samplers(cluster_config)
+        if 'samplers' in cluster_config:
+            self.samplers = self.build_samplers(cluster_config)
+        else:
+            self.samplers = None
 
     def cvt_time_spec_to_us(self, ts):
         if type(ts) == int:
@@ -307,10 +310,11 @@ class Cluster(object):
         self.walk(self.endpoints, '/' + self.name + '/endpoints')
         self.walk(self.aggregators, '/' + self.name + '/aggregators')
         self.walk(self.groups, '/' + self.name + '/groups')
-        self.walk(self.samplers, '/' + self.name + '/samplers')
         self.walk(self.producers, '/' + self.name + '/producers')
         self.walk(self.updaters, '/' + self.name + '/updaters')
         self.walk(self.stores, '/' + self.name + '/stores')
+        if 'samplers' in cluster_config:
+            self.walk(self.samplers, '/' + self.name + '/samplers')
         self.client.put('/'+self.name+'/last_updated', str(time.time()))
 
     def parse_to_cfg_str(self, cfg_obj):
@@ -329,30 +333,33 @@ class Cluster(object):
         all exist on the machines relevant to the ldmsd cluster.
         """
         for group_name in self.groups:
-            fd = open(f'{path}/{group_name}.conf', 'w+')
             # Load sampler statements
             group = self.groups[group_name]
             # Sampler config
-            try:
-                for smplr_group in self.samplers:
-                    # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
-                    if group_name != self.samplers[smplr_group]['group']:
-                        continue
-                    for sampler in self.samplers[smplr_group]['config']:
-                        cfg_str = self.parse_to_cfg_str(sampler)
-                        sname = sampler['name']
-                        interval = cvt_intrvl_str_to_us(sampler['interval'].split(':')[0])
-                        offset = cvt_intrvl_str_to_us(sampler['interval'].split(':')[1])
-                        fd.write(f'load name={sname}\n')
-                        fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
-                                 f'component_id=${{COMPONENT_ID}} '+
-                                 f'instance=${{HOSTNAME}}/{sname}\n')
-                        fd.write(f'start name={sname} interval={interval} offset={offset}\n')
-                fd.close()
-            except Exception as e:
-                a, b, d = sys.exc_info()
-                print(f'Error generating sampler configuration: {str(e)} {str(d.tb_lineno)}')
-                return errno.EINVAL
+            if self.samplers != None:
+                try:
+                    fd = open(f'{path}/{group_name}.conf', 'w+')
+                    for smplr_group in self.samplers:
+                        # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
+                        if group_name != self.samplers[smplr_group]['group']:
+                            continue
+                        for sampler in self.samplers[smplr_group]['config']:
+                            cfg_str = self.parse_to_cfg_str(sampler)
+                            sname = sampler['name']
+                            interval = cvt_intrvl_str_to_us(sampler['interval'].split(':')[0])
+                            offset = cvt_intrvl_str_to_us(sampler['interval'].split(':')[1])
+                            fd.write(f'load name={sname}\n')
+                            fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
+                                     f'component_id=${{COMPONENT_ID}} '+
+                                     f'instance=${{HOSTNAME}}/{sname}\n')
+                            fd.write(f'start name={sname} interval={interval} offset={offset}\n')
+                    fd.close()
+                except Exception as e:
+                    a, b, d = sys.exc_info()
+                    print(f'Error generating sampler configuration: {str(e)} {str(d.tb_lineno)}')
+                    return errno.EINVAL
+            else:
+                print(f'"samplers" not found in configuration file. Skipping...')
 
             # Agg config
             try:
@@ -413,7 +420,7 @@ class Cluster(object):
                             fd.write(f'strgp_add name={store} plugin={store_group[store]["plugin"]["name"]} '+
                                      f'container={store_group[store]["container"]} '+
                                      f'schema={store_group[store]["schema"]} '+
-                                     f'flush=60s\n')
+                                     f'flush={store_group[store]["flush"]}\n')
                             fd.write(f'strgp_start name={store}\n')
             except Exception as e:
                 ea, eb, ec = sys.exc_info()
