@@ -268,6 +268,27 @@ class Cluster(object):
             smplrs[smplr_spec['names']] = smplr_spec
         return smplrs
 
+    def build_plugins(self, config):
+        """
+        Generate plugins to load from a YAML config.
+        Return a dictionary keyed by the plugin's group name. Each dictionary entry
+        is a single plugin's configuration.
+        """
+        plugins = {}
+        for plugn_spec in config['plugins']:
+            self.check_required([ 'name', 'config' ],
+                                  plugn_spec, '"plugin" entry')
+            group = plugn_spec['group']
+            if group not in plugins:
+                plugins[group] = {}
+            grp_plugins = plugins[group]
+            plugin_name = plugn_spec['name']
+            if plugin_name in grp_plugins:
+                raise ValueError(f'Duplicate plugin name "{plugin_name}". '
+                                  'Plugin must be unique within a group.')
+            grp_plugins[plugin_name] = plugn_spec
+        return plugins
+
     def __init__(self, client, name, cluster_config):
         """
         """
@@ -283,6 +304,10 @@ class Cluster(object):
             self.samplers = self.build_samplers(cluster_config)
         else:
             self.samplers = None
+        if 'plugins' in cluster_config:
+            self.plugins = self.build_plugins(cluster_config)
+        else:
+            self.plugins = None
 
     def cvt_time_spec_to_us(self, ts):
         if type(ts) == int:
@@ -315,6 +340,8 @@ class Cluster(object):
         self.walk(self.stores, '/' + self.name + '/stores')
         if 'samplers' in cluster_config:
             self.walk(self.samplers, '/' + self.name + '/samplers')
+        if 'plugins' in cluster_config:
+            self.walk(self.plugins, '/' + self.name + '/plugins')
         self.client.put('/'+self.name+'/last_updated', str(time.time()))
 
     def parse_to_cfg_str(self, cfg_obj):
@@ -335,10 +362,18 @@ class Cluster(object):
         for group_name in self.groups:
             # Load sampler statements
             group = self.groups[group_name]
+
             # Sampler config
             if self.samplers != None:
                 try:
-                    fd = open(f'{path}/{group_name}.conf', 'w+')
+                    fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
+                    if self.plugins != None:
+                        if group_name in self.plugins:
+                            for plugin in self.plugins[group_name]:
+                                cfg_str = self.parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
+                                fd.write(f'load name={plugin}\n')
+                                fd.write(f'config name={plugin} {cfg_str}\n\n')
+
                     for smplr_group in self.samplers:
                         # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
                         if group_name != self.samplers[smplr_group]['group']:
@@ -384,6 +419,7 @@ class Cluster(object):
                         for producer in prod_group:
                             if i >= loop:
                                 break
+                            regex = False
                             pname = producer['name']
                             port = self.endpoints[producer['endpoint']]['port']
                             xprt = self.endpoints[producer['endpoint']]['xprt']
@@ -396,7 +432,22 @@ class Cluster(object):
                                      f'xprt={xprt} type={ptype} interval={interval}\n')
                             last_sampler = pname
                             i += 1
-                        fd.write('prdcr_start_regex regex=.*\n')
+                            if 'regex' in producer:
+                                regex = True
+                                fd.write(f'prdcr_start_regex regex={producer["regex"]}\n')
+                        if not regex:
+                            fd.write('prdcr_start_regex regex=.*\n')
+                    # Plugin Config
+                    if self.plugins != None:
+                        if group_name in self.plugins:
+                            for plugin in self.plugins[group_name]:
+                                cfg_str = self.parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
+                                if 'stream' in self.plugins[group_name][plugin]['config']:
+                                    # Will need to be updated for custom producer regex
+                                    fd.write(f'prdcr_subscribe stream={self.plugins[group_name][plugin]["config"]["stream"]} regex=.*\n')
+                                fd.write(f'load name={plugin}\n')
+                                fd.write(f'config name={plugin} {cfg_str}\n\n')
+
                     if group_name in self.updaters:
                         updtr_group = self.updaters[group_name]
                         for updtr in updtr_group:
