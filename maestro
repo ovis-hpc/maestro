@@ -92,7 +92,10 @@ class MaestroMonitor(object):
 
     def reset_conf(self):
         self.endpoints = self.config[self.prefix]['endpoints']
-        self.samplers = self.config[self.prefix]['samplers']
+        if 'samplers' in self.config[self.prefix]:
+            self.samplers = self.config[self.prefix]['samplers']
+        else:
+            self.samplers = None
         self.producers = self.config[self.prefix]['producers']
         self.aggregators = self.config[self.prefix]['aggregators']
         self.updaters = self.config[self.prefix]['updaters']
@@ -111,10 +114,17 @@ class MaestroMonitor(object):
                                     '-m', '2g',
                                     '-r', 'log/'+agg_host['name']+'.pid'])
 
-                comm = Communicator(agg_host['xprt'],
-                                    agg_host['addr'],
-                                    agg_host['port'],
-                                    agg_host['auth']['name'])
+                if 'conf' in agg_host['auth']:
+                    comm = Communicator(agg_host['xprt'],
+                                        agg_host['addr'],
+                                        agg_host['port'],
+                                        agg_host['auth']['name'],
+                                        {'conf' : agg_host['auth']['conf']})
+                else:
+                    comm = Communicator(agg_host['xprt'],
+                                        agg_host['addr'],
+                                        agg_host['port'],
+                                        agg_host['auth']['name'])
                 comms[grp_name][agg_host['name']] = comm
                 comm.connect()
         return comms
@@ -346,6 +356,8 @@ def start_samplers(samplers, hosts):
 def restart_samplers(samplers, hosts, config):
     # Stop all sampler plugins on samplers specified
     comms = {}
+    if self.samplers is None:
+        return False
     for smplr_spec in samplers.keys():
         # Stop running samplers before updating configuration
         names = expand_names(smplr_spec)

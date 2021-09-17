@@ -86,8 +86,8 @@ class Cluster(object):
                 self.check_required([ 'name' ],
                                     auth, "authentication configuration")
                 auth_name = auth['name']
-                if 'config' in auth:
-                    auth_config = auth['config']
+                if 'conf' in auth:
+                    auth_config = auth['conf']
                 else:
                     auth_config = ""
             else:
@@ -102,7 +102,7 @@ class Cluster(object):
                         'addr' : host,
                         'port' : port,
                         'xprt' : xprt,
-                        'auth' : { 'name' : auth_name, 'config' : auth_config }
+                        'auth' : { 'name' : auth_name, 'conf' : auth_config }
                     }
                     ep_dict[name] = h
 
@@ -294,6 +294,7 @@ class Cluster(object):
         """
         self.client = client
         self.name = name
+        self.cluster_config = cluster_config
         self.endpoints = self.build_endpoints(cluster_config)
         self.aggregators = self.build_aggregators(cluster_config)
         self.groups = self.build_groups(cluster_config)
@@ -331,18 +332,23 @@ class Cluster(object):
         pass
 
     def save_config(self):
-        self.client.delete_prefix('/' + self.name)
-        self.walk(self.endpoints, '/' + self.name + '/endpoints')
-        self.walk(self.aggregators, '/' + self.name + '/aggregators')
-        self.walk(self.groups, '/' + self.name + '/groups')
-        self.walk(self.producers, '/' + self.name + '/producers')
-        self.walk(self.updaters, '/' + self.name + '/updaters')
-        self.walk(self.stores, '/' + self.name + '/stores')
-        if 'samplers' in cluster_config:
-            self.walk(self.samplers, '/' + self.name + '/samplers')
-        if 'plugins' in cluster_config:
-            self.walk(self.plugins, '/' + self.name + '/plugins')
-        self.client.put('/'+self.name+'/last_updated', str(time.time()))
+        try:
+            self.client.delete_prefix('/' + self.name)
+            self.walk(self.endpoints, '/' + self.name + '/endpoints')
+            self.walk(self.aggregators, '/' + self.name + '/aggregators')
+            self.walk(self.groups, '/' + self.name + '/groups')
+            self.walk(self.producers, '/' + self.name + '/producers')
+            self.walk(self.updaters, '/' + self.name + '/updaters')
+            self.walk(self.stores, '/' + self.name + '/stores')
+            if 'samplers' in self.cluster_config:
+                self.walk(self.samplers, '/' + self.name + '/samplers')
+            if 'plugins' in self.cluster_config:
+                self.walk(self.plugins, '/' + self.name + '/plugins')
+            self.client.put('/'+self.name+'/last_updated', str(time.time()))
+        except Exception as e:
+            a, b, c = sys.exc_info()
+            print(str(e)+' '+str(c.tb_lineno))
+            return 1
 
     def parse_to_cfg_str(self, cfg_obj):
         cfg_str = ''
@@ -578,7 +584,10 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # blow away the existing configuration
-    cluster.save_config()
+    rc = cluster.save_config()
+    if rc:
+        print("Error saving ldms cluster configuration to etcd cluster")
+        sys.exit(0)
     print("LDMS aggregator configuration saved to etcd cluster.")
 
     sys.exit(0)
