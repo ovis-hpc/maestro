@@ -5,10 +5,11 @@ import yaml
 import hostlist
 import collections
 import argparse
-import etcd3
 import json
 import time
 from collections import Mapping, Sequence
+from noetcd import NoetcdClient
+from noetcd import MaestroBooleanOptionalAction
 
 class Cluster(object):
     def emit_value(self, path, value):
@@ -538,6 +539,7 @@ def cvt_intrvl_str_to_us(interval_s):
         raise ValueError(f"{interval_s} is not a valid time-interval string")
     return int(mult * factor)
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="LDMS Monitoring Cluster Configuration")
@@ -552,6 +554,9 @@ if __name__ == "__main__":
                         default="unknown")
     parser.add_argument("--generate-config-path", metavar="STRING", required=False,
                         default=False)
+    parser.add_argument("--etcd", action=MaestroBooleanOptionalAction,
+                        help="Enable transmission to etcd (default: no)");
+    parser.add_argument("--debug", action=MaestroBooleanOptionalAction);
     parser.add_argument("--version", metavar="VERSION",
                         help="The OVIS version for the output syntax (4 or 5), default is 4",
                         default=4)
@@ -563,9 +568,10 @@ if __name__ == "__main__":
     etcd_spec = yaml.safe_load(etcd_fp)
 
     pfx = etcd_spec['cluster']
-    etcd_hosts = ()
-    for h in etcd_spec['members']:
-        etcd_hosts += (( h['host'], h['port'] ),)
+    if args.etcd:
+        etcd_hosts = ()
+        for h in etcd_spec['members']:
+            etcd_hosts += (( h['host'], h['port'] ),)
 
     # All keys in the DB are prefixed with the cluster name, 'pfx'. So we can
     # have multiple monitoring hosted by the same consensus cluster.
@@ -573,9 +579,13 @@ if __name__ == "__main__":
     conf_spec = yaml.safe_load(config_fp)
 
     # Use the 1st host for now
-    client = etcd3.client(host=etcd_hosts[0][0], port=etcd_hosts[0][1],
+    if args.etcd:
+        import etcd3
+        client = etcd3.client(host=etcd_hosts[0][0], port=etcd_hosts[0][1],
         grpc_options=[ ('grpc.max_send_message_length',16*1024*1024),
                        ('grpc.max_receive_message_length',16*1024*1024)])
+    else:
+        client = NoetcdClient()
 
     cluster = Cluster(client, args.prefix, conf_spec)
     if args.generate_config_path:
@@ -589,5 +599,7 @@ if __name__ == "__main__":
         print("Error saving ldms cluster configuration to etcd cluster")
         sys.exit(0)
     print("LDMS aggregator configuration saved to etcd cluster.")
+    if not args.etcd and args.debug:
+        client.print_all()
 
     sys.exit(0)
