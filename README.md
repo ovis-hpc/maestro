@@ -23,6 +23,8 @@ daemons, however, this feature is planned for the future.
 ## Dependencies
 etcd3 can be downlaoded via pip3, or from source at:
 https://github.com/etcd-io/etcd
+It is not required if only configuration file generation with
+maestro_ctrl is required.
 
 ## Configuration Generation
 A ldms cluster's configuration can be generated with the maestro_ctrl
@@ -48,7 +50,7 @@ There are two principle commands, maestro and maestro_ctrl. maestro will run the
 
     maestro --cluster config/etcd.yaml --prefix orion
 
-    maestro_ctrl --cluster config/etcd.yaml --ldms_config config/orion.yaml --prefix orion
+    maestro_ctrl --etcd --cluster config/etcd.yaml --ldms_config config/orion.yaml --prefix orion
 
 Sampler interval's and offsets can be configured during runtime, by updating the ldmsd yaml
 configuration file, and running the maestro_ctrl command to update the etcd cluster with the
@@ -73,6 +75,7 @@ members:
   - host: 10.128.0.9
     port: 2379
 ```
+No 'members:' declarations are required if etcd is not in use.
 
 And here is an example of a LDMS Cluster Configuration File:
 
