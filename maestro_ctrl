@@ -483,14 +483,14 @@ class Cluster(object):
                 ea, eb, ec = sys.exc_info()
                 print('Agg config Error: '+str(e)+' Line:'+str(ec.tb_lineno))
 
-    def config_v5(self):
+    def config_v5(self, path):
         pass
 
-    def config(self, version=4):
+    def config(self, path, version=4):
         if version == 4:
-            return self.config_v4()
+            return self.config_v4(path)
         elif version == 5:
-            return self.config_v5()
+            return self.config_v5(path)
         raise ValueError("Version {0} is not recognized".format(version))
 
 def expand_names(name_spec):
@@ -579,8 +579,15 @@ if __name__ == "__main__":
 
     cluster = Cluster(client, args.prefix, conf_spec)
     if args.generate_config_path:
-        cluster.config_v4(args.generate_config_path)
-        print("LDMSD v4 config files generated")
+        if not os.path.exists(args.generate_config_path):
+            try:
+                os.makedirs(args.generate_config_path)
+            except:
+                pass
+        if not os.path.isdir(args.generate_config_path):
+            raise ValueException("Cannot use output config path " + args.generate_config_path)
+        cluster.config(args.generate_config_path, args.version)
+        print("LDMSD config files generated in " + args.generate_config_path)
         sys.exit(0)
 
     # blow away the existing configuration
