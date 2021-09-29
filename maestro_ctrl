@@ -391,9 +391,14 @@ class Cluster(object):
                             interval = cvt_intrvl_str_to_us(sampler['interval'].split(':')[0])
                             offset = cvt_intrvl_str_to_us(sampler['interval'].split(':')[1])
                             fd.write(f'load name={sname}\n')
-                            fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
-                                     f'component_id=${{COMPONENT_ID}} '+
-                                     f'instance=${{HOSTNAME}}/{sname}\n')
+                            fd.write(f'config {cfg_str} ')
+                            if not "instance" in sampler:
+                                fd.write('instance=${{HOSTNAME}}/{sname} ')
+                            if not "producer" in sampler:
+                                fd.write(f'producer=${{HOSTNAME}} ')
+                            if not "component_id" in sampler:
+                                fd.write(f'component_id=${{COMPONENT_ID}} ')
+                            fd.write('\n')
                             fd.write(f'start name={sname} interval={interval} offset={offset}\n')
                     fd.close()
                 except Exception as e:
@@ -477,8 +482,10 @@ class Cluster(object):
                                 loaded_plugins.append(store_group[store]["plugin"]["name"])
                             fd.write(f'strgp_add name={store} plugin={store_group[store]["plugin"]["name"]} '+
                                      f'container={store_group[store]["container"]} '+
-                                     f'schema={store_group[store]["schema"]} '+
-                                     f'flush={store_group[store]["flush"]}\n')
+                                     f'schema={store_group[store]["schema"]}')
+                            if "flush" in store_group[store]:
+                                fd.write(f'flush={store_group[store]["flush"]}')
+                            fd.write(f'\n')
                             fd.write(f'strgp_start name={store}\n')
             except Exception as e:
                 ea, eb, ec = sys.exc_info()

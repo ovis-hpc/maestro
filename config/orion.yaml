@@ -91,6 +91,13 @@ samplers:
       - name        : procstat
         interval    : "1.0s:0ms"
         perm        : "0777"
+ 
+      - name        : dstat # Variables can be specific to plugin
+        interval    : "1.0s:0ms" # Interval:offset format. Used when starting the sampler plu
+        instance    : "agg-${HOSTNAME}" 
+        schema      : "agg-dstat" 
+        producer    : "ib1-${HOSTNAME}"
+        component_id: 23b
 
 updaters:            
 - name  : all           # must be unique within group
