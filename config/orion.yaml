@@ -85,11 +85,13 @@ samplers:
         perm        : "0777"
 
       - name        : vmstat
-        interval    : "1.0s:0ms"
+        interval    : "100ms"
+        offset      : "2ms"
         perm        : "0777"
 
       - name        : procstat
-        interval    : "1.0s:0ms"
+        interval    : 2000000
+        offset      : 200000
         perm        : "0777"
 
 updaters:            

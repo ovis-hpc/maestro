@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys
+import os, sys, traceback
 import errno
 import yaml
 import hostlist
@@ -354,7 +354,7 @@ class Cluster(object):
     def parse_to_cfg_str(self, cfg_obj):
         cfg_str = ''
         for key in cfg_obj:
-            if key != 'interval':
+            if key != 'interval' and key != 'offset':
                 if len(cfg_str) > 8:
                     cfg_str += ' '
                 cfg_str += key + '=' + str(cfg_obj[key])
@@ -388,16 +388,16 @@ class Cluster(object):
                         for sampler in self.samplers[smplr_group]['config']:
                             cfg_str = self.parse_to_cfg_str(sampler)
                             sname = sampler['name']
-                            interval = cvt_intrvl_str_to_us(sampler['interval'].split(':')[0])
-                            offset = cvt_intrvl_str_to_us(sampler['interval'].split(':')[1])
                             fd.write(f'load name={sname}\n')
                             fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
                                      f'component_id=${{COMPONENT_ID}} '+
                                      f'instance=${{HOSTNAME}}/{sname}\n')
+                            (interval, offset) = cvt_intrvl_str_to_us(sampler)
                             fd.write(f'start name={sname} interval={interval} offset={offset}\n')
                     fd.close()
                 except Exception as e:
                     a, b, d = sys.exc_info()
+                    traceback.print_exc()
                     print(f'Error generating sampler configuration: {str(e)} {str(d.tb_lineno)}')
                     return errno.EINVAL
             else:
@@ -432,7 +432,7 @@ class Cluster(object):
                             xprt = self.endpoints[producer['endpoint']]['xprt']
                             hostname = self.endpoints[producer['endpoint']]['addr']
                             ptype = producer['type']
-                            interval = cvt_intrvl_str_to_us(producer['reconnect'])
+                            interval = cvt_intrvl_str_to_us(producer, interval='reconnect')[0]
                             fd.write(f'prdcr_add name={pname} '+
                                      f'host={hostname} '+
                                      f'port={port} '+
@@ -458,8 +458,7 @@ class Cluster(object):
                     if group_name in self.updaters:
                         updtr_group = self.updaters[group_name]
                         for updtr in updtr_group:
-                            interval = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'].split(':')[0])
-                            offset = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'].split(':')[1])
+                            (interval, offset) = cvt_intrvl_str_to_us(updtr_group[updtr])
                             fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
                                      f'interval={interval} offset={offset} auto_interval=true\n')
                             for prod in updtr_group[updtr]['producers']:
@@ -503,14 +502,43 @@ def expand_names(name_spec):
         names = hostlist.expand_hostlist(name_spec)
     return names
 
-def cvt_intrvl_str_to_us(interval_s):
-    """Converts a time interval string to microseconds
+def parse_number(s):
+    if type(s) == int:
+        return (1, str(s))
+    if type(s) == float:
+        return (1000000, str(s))
+    if 'us' in s:
+        factor = 1
+        ival_s = s.replace('us','')
+    elif 'ms' in s:
+        factor = 1000
+        ival_s = s.replace('ms','')
+    elif 's' in s:
+        factor = 1000000
+        ival_s = s.replace('s','')
+    elif 'm' in s:
+        factor = 60000000
+        ival_s = s.replace('m','')
+    else:
+        factor = 1
+        ival_s = s
+    return (factor, ival_s)
+
+def cvt_intrvl_str_to_us(d, interval="interval", offset="offset", debug=False):
+    """Converts time strings from d to microseconds field list.
+    The strings used default to 'interval' and 'offset' but can
+    be redefined by overriding the defaulted arguments.
+    If the interval string is compounded with ":", the second half
+    is used for the offset. If both : and offset are present in
+    the same dictionary, it is an error.
+    Ints, floats or strings are supported so stuff just works.
 
     A time-interval string is an integer or float follows by a
     unit-string. A unit-string is any of the following:
 
     's'  - seconds
     'us' - microseconds
+    'ms' - milliseconds
     'm'  - minutes
 
     Unit strings are not case-sensitive.
@@ -519,26 +547,95 @@ def cvt_intrvl_str_to_us(interval_s):
     '1.5s' - 1.5 seconds
     '1.5S' - 1.5 seconds
     '2s'   - 2 seconds
-    """
-    interval_s = interval_s.lower()
-    if 'us' in interval_s:
-        factor = 1
-        ival_s = interval_s.replace('us','')
-    if 'ms' in interval_s:
-        factor = 1000
-        ival_s = interval_s.replace('ms','')
-    elif 's' in interval_s:
-        factor = 1000000
-        ival_s = interval_s.replace('s','')
-    elif 'm' in interval_s:
-        factor = 60000000
-        ival_s = interval_s.replace('m','')
-    try:
-        mult = float(ival_s)
-    except:
-        raise ValueError(f"{interval_s} is not a valid time-interval string")
-    return int(mult * factor)
 
+    interval = cvt_intrvl_str_to_us(producer, interval='reconnect')[0]
+    (interval, offset) = cvt_intrvl_str_to_us(sampler)
+    """
+    if debug:
+        print("cvt: {} -- {}".format(interval, d[interval]))
+        if offset in d:
+            print("cvt: {} -- {}".format(offset, d[offset]))
+    res = []
+
+    if type(d[interval]) == int:
+        # assume ints are in microseconds
+        res.append(d[interval])
+    elif type(d[interval]) == float:
+        # assume floats are in seconds
+        res.append(int(d[interval] * 1000000.0))
+    else:
+        for i in d[interval].split(":"):
+            interval_s = i.lower()
+            (factor, ival_s) = parse_number(interval_s)
+            try:
+                mult = float(ival_s)
+                res.append(int(mult * factor))
+            except:
+                raise ValueError(f"{interval_s} is not a valid time-interval string")
+    if len(res) == 1:
+        if not offset in d:
+            res.append(0)
+            if debug:
+                print("timedecode: {}".format(res))
+            return res
+        (factor, ival_s) = parse_number(d[offset])
+        try:
+            mult = float(ival_s)
+            res.append(int(mult * factor))
+        except:
+            raise ValueError(f"{interval_s} is not a valid time-offset string")
+    else:
+        if offset in d:
+            raise ValueError(f"{interval_s} and {offset} cannot both be defined.")
+    if debug:
+        print("timedecode: {}".format(res))
+    return res
+
+def test_time():
+    """ test permutations on cvt_intrvl_str_to_us"""
+    d = dict()
+    debug = False
+    d["interval"] = "2ms:3us"
+    (interval, offset) = cvt_intrvl_str_to_us(d, debug=debug)
+    if interval != 2000 or offset != 3:
+        raise Exception("Failed to parse " + d["interval"])
+    d["interval"] = "2:3"
+    (interval, offset) = cvt_intrvl_str_to_us(d, debug=debug)
+    if interval != 2 or offset != 3:
+        raise Exception("Failed to parse " + d["interval"])
+    d["interval"] = "2s:66ms"
+    (interval, offset) = cvt_intrvl_str_to_us(d, debug=debug)
+    if interval != 2000000 or offset != 66000:
+        raise Exception("Failed to parse " + d["interval"])
+    d["reconnect"] = "500ms"
+    interval = cvt_intrvl_str_to_us(d, interval='reconnect', debug=debug)[0]
+    if interval != 500000:
+        raise Exception("Failed to parse " + d["reconnect"])
+    d['offset'] = 12.3
+    d["interval"] = 2.5
+    (interval, offset) = cvt_intrvl_str_to_us(d, debug=debug)
+    if interval != 2500000 or offset != 12300000:
+        raise Exception("Failed to parse " + d["interval"] + " " +d['offset'])
+    d['offset'] = 123
+    d["interval"] = "3s"
+    (interval, offset) = cvt_intrvl_str_to_us(d, debug=debug)
+    if interval != 3000000 or offset != 123:
+        raise Exception("Failed to parse " + d["interval"] + " " +d['offset'])
+    d["floaty"] = "0.5s:0.1ms"
+    (interval, offset) = cvt_intrvl_str_to_us(d, interval="floaty", offset='o', debug=debug)
+    if interval != 500000 or offset != 100:
+        raise Exception("Failed to parse " + d["floaty"])
+    d['o'] = 1
+    fail = False
+    try:
+        (interval, offset) = cvt_intrvl_str_to_us(d, interval="floaty", offset='o', debug=debug)
+        fail = True
+    except:
+        pass
+    if fail:
+        print("test-time: FAIL")
+    else:
+        print("test-time: PASS")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -557,10 +654,15 @@ if __name__ == "__main__":
     parser.add_argument("--etcd", action=MaestroBooleanOptionalAction,
                         help="Enable transmission to etcd (default: no)");
     parser.add_argument("--debug", action=MaestroBooleanOptionalAction);
+    parser.add_argument("--test-time", action=MaestroBooleanOptionalAction);
     parser.add_argument("--version", metavar="VERSION",
                         help="The OVIS version for the output syntax (4 or 5), default is 4",
                         default=4)
     args = parser.parse_args()
+
+    if args.test_time:
+        test_time()
+        sys.exit(0)
 
     # Load the cluster configuration file. This configures the daemons
     # that support the key/value configuration database
