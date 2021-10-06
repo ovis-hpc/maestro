@@ -1,0 +1,2 @@
+# this file should cause an understandable error message
+# test: ./maestro_ctrl --cluster config/etcd.yaml --ldms_config config/none.yaml --prefix foo --generate-config-path ./fred

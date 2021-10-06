@@ -1,0 +1,6 @@
+# this is the least yaml that will process with maestro_ctrl
+# test: ./maestro_ctrl --cluster config/etcd.yaml --ldms_config config/min.yaml --prefix foo --generate-config-path ./fred
+groups :
+ - name : "1"
+   endpoints : "1"
+   interfaces : "1"
