@@ -51,7 +51,7 @@ endpoints:
       config  :
         domain : samplers
 
-  - names : &l1-agg-endpoints "~{hpfx}ldms1" 
+  - names : &l1-agg-endpoints "~{hpfx}ldms1"
     group : &l1-agg "l1-agg"
     hosts : &agg-host "~{hpfx}ldms1"
     ports : "413"
@@ -64,12 +64,12 @@ endpoints:
 groups:
   - endpoints : [*admin,*lustre-mds,*lustre-oss,*login,*compute]
     name : samplers
-    interfaces : 
+    interfaces :
       - [*compute,*login,*lustre-oss,*lustre-mds,*admin]
 
   - endpoints : *l1-agg-endpoints
     name : *l1-agg
-    interfaces : 
+    interfaces :
       - [*admin,*lustre-mds,*lustre-oss,*login,*compute]
       - *l1-agg-endpoints
 
@@ -123,11 +123,11 @@ samplers:
       - <<: *sampler-defaults
         plugin      : filesingle
         interval    : 5000000
-        schema      : filesingle_{mycluster} 
+        schema      : filesingle_{mycluster}
         conf        : /etc/sysconfig/ldms.d/plugins-conf/filesingle.data.login
         timing      : keyword
       - <<: *sampler-defaults
-        plugin      : tx2mon 
+        plugin      : tx2mon
         auto-schema : 1
         array       : 1
         extra       : 1
@@ -150,7 +150,7 @@ samplers:
         plugin      : llnl_lustre_client
         schema      : lustre_client
 
-updaters:            
+updaters:
 - name  : all           # must be unique within group
   group : *l1-agg
   interval : "1.0s:0ms"
@@ -196,7 +196,7 @@ stores :
   - <<: *store-defaults-csv
     schema      : filesingle
   - <<: *store-defaults-csv
-    schema      : tx2mon 
+    schema      : tx2mon
   - <<: *store-defaults-csv
     schema      : dstat
   - <<: *store-defaults-csv
