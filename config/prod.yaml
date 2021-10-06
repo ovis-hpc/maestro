@@ -1,0 +1,211 @@
+mycluster : cluster1
+hpfx      : cl
+endpoints:
+  - names : &compute "~{hpfx}[1-288]-411"
+    group : samplers
+    hosts : &compute-hosts "~{hpfx}[1-288]-ib0"
+    ports : &compute-ports "411"
+    xprt : rdma
+    auth :
+      name  : ovis
+      config  :
+        domain : samplers
+
+  - names : &login "~{mycluster}-login[1-3]-411"
+    group : samplers
+    hosts : &login-hosts "~{mycluster}-login[1-3]-ib0"
+    ports : &login-ports "411"
+    xprt : rdma
+    auth :
+      name  : ovis
+      config  :
+        domain : samplers
+
+  - names : &lustre-oss "~{hpfx}oss[1-4]-411"
+    group : samplers
+    hosts : &lustre-oss-hosts "~{hpfx}oss[1-4]-ib0"
+    ports : &lustre-oss-ports "411"
+    xprt : rdma
+    auth :
+      name  : ovis
+      config  :
+        domain : samplers
+
+  - names : &lustre-mds "~{hpfx}mds[1-2]-411"
+    group : samplers
+    hosts : &lustre-mds-hosts "~{hpfx}mds[1-2]-ib0"
+    ports : &lustre-mds-ports "411"
+    xprt : rdma
+    auth :
+      name  : ovis
+      config  :
+        domain : samplers
+
+  - names : &admin "~{hpfx}ldms1,~{hpfx}admin[1-3]-411"
+    group : samplers
+    hosts : &admin-hosts "~{hpfx}ldms1-ib0,~{hpfx}admin[1-3]-ib0"
+    ports : &admin-ports "411"
+    xprt : rdma
+    auth :
+      name  : ovis
+      config  :
+        domain : samplers
+
+  - names : &l1-agg-endpoints "~{hpfx}ldms1" 
+    group : &l1-agg "l1-agg"
+    hosts : &agg-host "~{hpfx}ldms1"
+    ports : "413"
+    xprt : sock
+    auth :
+      name  : ovis
+      config  :
+        domain : aggregators
+
+groups:
+  - endpoints : [*admin,*lustre-mds,*lustre-oss,*login,*compute]
+    name : samplers
+    interfaces : 
+      - [*compute,*login,*lustre-oss,*lustre-mds,*admin]
+
+  - endpoints : *l1-agg-endpoints
+    name : *l1-agg
+    interfaces : 
+      - [*admin,*lustre-mds,*lustre-oss,*login,*compute]
+      - *l1-agg-endpoints
+
+aggregators:
+  - names     : *l1-agg-endpoints
+    endpoints : *l1-agg-endpoints
+    group     : *l1-agg
+
+producers:
+  - names     : *admin
+    endpoints : *admin
+    #- names     : [*admin,*lustre-mds,*lustre-oss,*login,*compute]
+    # endpoints : [*admin,*lustre-mds,*lustre-oss,*login,*compute]
+    group     : *l1-agg
+    reconnect : 20s
+    type      : active
+    updaters  :
+      - l1-all
+
+samplers:
+  # - names       : [*admin,*lustre-mds,*lustre-oss,*login,*compute]
+  - names       : *admin
+    group : samplers
+    sampler_config_defaults: &sampler-defaults
+        plugin      : plugin_unset
+        name        : ~{plugin}
+        schema      : ~{plugin}
+        job_set     : ${host}/jobid
+        instance    : ${HOSTNAME}/~{name}
+        component_id: ${COMPONENT_ID}
+        interval    : 1000000
+        offset      : 0
+        perm        : "0644"
+
+    config :
+      - <<: *sampler-defaults
+        plugin      : jobid
+        file        : /var/run/ldms.slurm.jobinfo
+      - <<: *sampler-defaults
+        plugin      : meminfo
+      - <<: *sampler-defaults
+        plugin      : vmstat
+      - <<: *sampler-defaults
+        plugin      : procstat
+        schema      : procstat_~{maxcpu}
+        maxcpu      : 72
+      - <<: *sampler-defaults
+        plugin      : loadavg
+        metrics     : load1min,load5min,load15min,runnable,scheduling_entities
+        interval    : 10000000
+      - <<: *sampler-defaults
+        plugin      : filesingle
+        interval    : 5000000
+        schema      : filesingle_{mycluster} 
+        conf        : /etc/sysconfig/ldms.d/plugins-conf/filesingle.data.login
+        timing      : keyword
+      - <<: *sampler-defaults
+        plugin      : tx2mon 
+        auto-schema : 1
+        array       : 1
+        extra       : 1
+      - <<: *sampler-defaults
+        plugin      : dstat
+        io          : 1
+        stat        : 1
+        statm       : 1
+        fdtypes     : 1
+        auto-schema : 1
+      - <<: *sampler-defaults
+        plugin      : procnet
+      - <<: *sampler-defaults
+        plugin      : sysclassib
+      - <<: *sampler-defaults
+        plugin      : procnfs
+      - <<: *sampler-defaults
+        plugin      : lnet_stats
+      - <<: *sampler-defaults
+        plugin      : llnl_lustre_client
+        schema      : lustre_client
+
+updaters:            
+- name  : all           # must be unique within group
+  group : *l1-agg
+  interval : "1.0s:0ms"
+  sets :
+    - regex : .*        # regular expression matching set name or schema
+      field : inst      # 'instance' or 'schema'
+  producers :
+    - regex : .*        # regular expression matching producer name
+                        # this is evaluated on the Aggregator, not
+                        # at configuration time'
+
+store_config_defaults_csv: &store-defaults-csv
+  - schema    : schema_unset
+    name      : csv-~{schema}
+    group     : *l1-agg
+    container : store_csv
+    plugin :
+      name   : store_csv
+      config :
+        path : /ldmslocal/store
+        altheader   : 0
+        typeheader  : 1
+        create_uid  : 3031
+        create_gid  : 3031
+
+stores :
+  - <<: *store-defaults-csv
+    schema    : meminfo
+  - <<: *store-defaults-csv
+    schema    : vmstat
+  - <<: *store-defaults-csv
+    schema    : procstat
+  - <<: *store-defaults-csv
+    schema     : jobid
+  - <<: *store-defaults-csv
+    schema      : meminfo
+  - <<: *store-defaults-csv
+    schema      : vmstat
+  - <<: *store-defaults-csv
+    schema      : procstat
+  - <<: *store-defaults-csv
+    schema      : loadavg
+  - <<: *store-defaults-csv
+    schema      : filesingle
+  - <<: *store-defaults-csv
+    schema      : tx2mon 
+  - <<: *store-defaults-csv
+    schema      : dstat
+  - <<: *store-defaults-csv
+    schema      : procnet
+  - <<: *store-defaults-csv
+    schema      : sysclassib
+  - <<: *store-defaults-csv
+    schema      : procnfs
+  - <<: *store-defaults-csv
+    schema      : lnet_stats
+  - <<: *store-defaults-csv
+    schema      : lustre_client

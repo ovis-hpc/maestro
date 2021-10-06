@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys
+import os, sys, traceback
 import errno
 import yaml
 import hostlist
@@ -8,7 +8,69 @@ import argparse
 import etcd3
 import json
 import time
+import re
+import copy
 from collections import Mapping, Sequence
+
+class TildeSubs(object):
+    """manage a stack of dicts for ~{} expansion"""
+    def __init__(self):
+        self.stack = []
+        self.push(dict())
+        self.re = re.compile(r'~\{[^~{}]+\}')
+    def push(self, d):
+        """stash current dict."""
+        self.stack.append(d)
+    def pop(self):
+        del self.stack[-1]
+    def get_val(self, key):
+        """reverse search on stack for closest value of the key.
+           If nothing is found, returns False.
+           If empty string is found, returns None."""
+        for i in range(len(self.stack) -1, -1, -1):
+            if key in self.stack[i]:
+                return self.stack[i][key]
+        return False
+    def expand_val(self, val, debug=False):
+        """ DFBU substitution on a string. Returns (changed, newval)"""
+        if debug:
+            print("searching value: {}\n".format(val))
+        newval = ""
+        last = 0
+        changed = False
+        for m in self.re.finditer(val):
+            newval += val[last:m.start()]
+            last = m.end()
+            var = m.string[m.start():m.end()][2:-1]
+            if debug:
+                print("containing: {}\n".format(var))
+            s = self.get_val(var)
+            if s:
+                changed = True
+                newval += str(s)
+                if debug:
+                    print("replaced with: {}\n".format(s))
+            else:
+                if not isinstance(s, bool):
+                    changed = True
+                    if debug:
+                        print("empty replace: {}\n".format(var))
+                else:
+                    if debug:
+                        print("undefined: {}\n".format(var))
+        newval += val[last:]
+        return (changed, newval)
+    def expand_key(self, key, debug=False):
+        """ DFBU substitution on a key in deepest current dict"""
+        if debug:
+            print("checking: {}\n".format(key))
+        val = self.stack[-1][key]
+        (changed, newval) = self.expand_val(val, debug)
+        if changed:
+            if debug:
+                print("key updated: {} : {}\n".format(key, newval))
+            self.stack[-1][key] = newval
+        return changed
 
 class Cluster(object):
     def emit_value(self, path, value):
@@ -16,6 +78,46 @@ class Cluster(object):
             res = client.put(path, str(value))
         except Exception as e:
             print("Error {0} setting {1} : {2}".format(str(e), path, str(value)))
+
+    def walk_tilde(self, obj, subs=None, debug=False):
+        """Walk the obj given and apply ~{} string replacement in place.
+           In scalar values, ~{var} is replaced by its value if
+           var is the name of scalar value at the same or higher scope.
+           This provides us the ability to say:
+           cluster: foo
+           config:
+             - plugin: bar
+             - inst: ~{cluster}/${HOSTNAME}/~{plugin}
+           which is not a feature of yaml or json.
+           Needed since yaml anchors do not substitute within strings.
+        """
+        if not subs:
+            subs = TildeSubs()
+        if isinstance(obj, (int, float, bool, str)):
+            return
+        if isinstance(obj, Sequence):
+            i = 0
+            for v in obj:
+                self.walk_tilde(v, subs=subs, debug=debug)
+                if isinstance(v, str):
+                    changed = True
+                    newval = v
+                    while changed:
+                        (changed, newval) = subs.expand_val(newval, debug)
+                    if newval != v:
+                        obj[i] = newval
+                i += 1
+        if isinstance(obj, Mapping):
+            subs.push(obj)
+            for (key, value) in obj.items():
+                self.walk_tilde(value, subs=subs, debug=debug)
+            changed = True
+            while changed:
+                changed = False
+                for (key, value) in obj.items():
+                    if isinstance(value, str):
+                        changed = changed or subs.expand_key(key, debug)
+            subs.pop()
 
     def walk(self, obj, path=''):
         if isinstance(obj, Mapping):
@@ -295,6 +397,10 @@ class Cluster(object):
         self.client = client
         self.name = name
         self.cluster_config = cluster_config
+        # keep a config copy until we are sure we don't need unsubst round-trip
+        self.cluster_config_raw = copy.deepcopy(cluster_config)
+        # expand ~{} substitutions
+        self.walk_tilde(self.cluster_config)
         self.endpoints = self.build_endpoints(cluster_config)
         self.aggregators = self.build_aggregators(cluster_config)
         self.groups = self.build_groups(cluster_config)
@@ -355,8 +461,11 @@ class Cluster(object):
         for key in cfg_obj:
             if key != 'interval':
                 if len(cfg_str) > 8:
-                    cfg_str += ' '
-                cfg_str += key + '=' + str(cfg_obj[key])
+                    cfg_str += ' \\\n\t'
+                if str(cfg_obj[key]).lower() == ".keyword":
+                    cfg_str += key
+                else:
+                    cfg_str += key + '=' + str(cfg_obj[key])
         return cfg_str
 
     def config_v4(self, path):
@@ -378,7 +487,7 @@ class Cluster(object):
                             for plugin in self.plugins[group_name]:
                                 cfg_str = self.parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
                                 fd.write(f'load name={plugin}\n')
-                                fd.write(f'config name={plugin} {cfg_str}\n\n')
+                                fd.write(f'config name={plugin} \\\n{cfg_str}\n\n')
 
                     for smplr_group in self.samplers:
                         # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
@@ -390,13 +499,12 @@ class Cluster(object):
                             interval = cvt_intrvl_str_to_us(sampler['interval'].split(':')[0])
                             offset = cvt_intrvl_str_to_us(sampler['interval'].split(':')[1])
                             fd.write(f'load name={sname}\n')
-                            fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
-                                     f'component_id=${{COMPONENT_ID}} '+
-                                     f'instance=${{HOSTNAME}}/{sname}\n')
+                            fd.write(f'config {cfg_str}\n')
                             fd.write(f'start name={sname} interval={interval} offset={offset}\n')
                     fd.close()
                 except Exception as e:
                     a, b, d = sys.exc_info()
+                    traceback.print_exc()
                     print(f'Error generating sampler configuration: {str(e)} {str(d.tb_lineno)}')
                     return errno.EINVAL
             else:
