@@ -18,6 +18,8 @@ class Cluster(object):
             print("Error {0} setting {1} : {2}".format(str(e), path, str(value)))
 
     def walk(self, obj, path=''):
+        if not obj:
+            return
         if isinstance(obj, Mapping):
             for key in obj:
                 self.walk(obj[key], '{0}/{1}'.format(path, str(key)))
@@ -109,9 +111,9 @@ class Cluster(object):
         return ep_dict
 
     def build_groups(self, config):
-        groups = {}
         if 'groups' not in config:
-            return groups
+            return None
+        groups = {}
         group_conf = config['groups']
         for group_spec in group_conf:
             self.check_required(['name', 'endpoints', 'interfaces'],
@@ -128,10 +130,9 @@ class Cluster(object):
         return groups
 
     def build_aggregators(self, config):
-        aggregators = {}
         if 'aggregators' not in config:
-            return aggregators
-
+            return None
+        aggregators = {}
         agg_conf = config['aggregators']
         for agg_spec in agg_conf:
             self.check_required([ 'names', 'group', 'endpoints' ],
@@ -160,6 +161,8 @@ class Cluster(object):
         Return a dictionary keyed by the group name. Each dictionary
         entry is a list of producers in that group.
         """
+        if not 'producers' in config:
+            return None
         producers = {}
         prod_spec = config['producers']
         for prod in prod_spec:
@@ -198,6 +201,8 @@ class Cluster(object):
         Return a dictionary keyed by the group name. Each dictionary
         entry is a list of updaters in that group.
         """
+        if not 'updaters' in config:
+            return None
         updaters = {}
         for updtr_spec in config['updaters']:
             self.check_required([ 'name', 'group', 'interval', 'sets', 'producers' ],
@@ -234,9 +239,9 @@ class Cluster(object):
         Return a dictionary keyed by the group name. Each dictionary
         entry is a list of stores in that group.
         """
-        stores = {}
         if 'stores' not in config:
             return None
+        stores = {}
         for store_spec in config['stores']:
             self.check_required([ 'name', 'group', 'plugin', 'container', 'schema' ],
                                 store_spec, '"store" entry')
@@ -261,6 +266,8 @@ class Cluster(object):
         Return a dictionary keyed by the samplers group name. Each dictionary
         entry is a single ldms daemon's sampler configuration.
         """
+        if not "samplers" in config:
+            return None
         smplrs = {}
         for smplr_spec in config['samplers']:
             self.check_required([ 'names' ],
@@ -274,6 +281,8 @@ class Cluster(object):
         Return a dictionary keyed by the plugin's group name. Each dictionary entry
         is a single plugin's configuration.
         """
+        if not 'plugins' in config:
+            return None
         plugins = {}
         for plugn_spec in config['plugins']:
             self.check_required([ 'name', 'config' ],
@@ -340,10 +349,8 @@ class Cluster(object):
             self.walk(self.producers, '/' + self.name + '/producers')
             self.walk(self.updaters, '/' + self.name + '/updaters')
             self.walk(self.stores, '/' + self.name + '/stores')
-            if 'samplers' in self.cluster_config:
-                self.walk(self.samplers, '/' + self.name + '/samplers')
-            if 'plugins' in self.cluster_config:
-                self.walk(self.plugins, '/' + self.name + '/plugins')
+            self.walk(self.samplers, '/' + self.name + '/samplers')
+            self.walk(self.plugins, '/' + self.name + '/plugins')
             self.client.put('/'+self.name+'/last_updated', str(time.time()))
         except Exception as e:
             a, b, c = sys.exc_info()
@@ -365,6 +372,8 @@ class Cluster(object):
         This configuration assumes that the environemnt variables COMPONENT_ID, HOSTNAME
         all exist on the machines relevant to the ldmsd cluster.
         """
+        if not self.groups:
+            raise ValueError("No groups found in input.\n")
         for group_name in self.groups:
             # Load sampler statements
             group = self.groups[group_name]
@@ -405,7 +414,7 @@ class Cluster(object):
             # Agg config
             try:
                 ''' "Balance" agg configuration if all samplers are included in each aggregator '''
-                if group_name not in self.aggregators:
+                if not self.aggregators or group_name not in self.aggregators:
                     continue
                 last_sampler = None
                 for agg in self.aggregators[group_name]:
