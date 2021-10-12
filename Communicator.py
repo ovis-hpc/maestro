@@ -375,15 +375,17 @@ class Communicator(object):
             status = None
         return err, status
 
-    def smplr_start(self, name, interval_str):
-        intrvl_us, offset_us = cvt_sample_intrvl_str_to_us(interval_str)
+    def plugn_start(self, name, interval_us, offset_us=None):
+        # If offset unspecified, start in non-synchronous mode
+        req_attrs = [ LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name),
+                      LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(interval_us))
+                    ]
+        if offset_us != None:
+            req_attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset_us)))
         req = LDMSD_Request(
                 command_id = LDMSD_Request.PLUGN_START,
-                attrs=[
-                    LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name),
-                    LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(intrvl_us)),
-                    LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset_us))
-                ])
+                attrs=req_attrs
+                )
         try:
             req.send(self)
             resp = req.receive(self)

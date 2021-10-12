@@ -344,8 +344,12 @@ def start_samplers(samplers, hosts):
                 if 'interval' in plugin:
                     interval = plugin['interval']
                 else:
-                    interval = '1.0s:0ms'
-                err, msg = comm.smplr_start(plugin['name'], interval)
+                    interval = 1000000
+                if 'offset' in plugin:
+                    offset = plugin['interval']
+                else:
+                    offset = None
+                err, msg = comm.plugn_start(plugin['name'], interval, offset)
                 if err:
                     print(f"Error {err} starting {plugin['name']} on {smplr_name} "
                            "Error: {msg}")
@@ -403,7 +407,11 @@ def restart_samplers(samplers, hosts, config):
                        "Err: {err} {res}")
                 return False
             for plugn in config[smplr_spec]['config']:
-                err, rc = comm.smplr_start(plugn['name'], plugn['interval'])
+                if 'offset' in plugn:
+                    offset = plugn['offset']
+                else:
+                    offset = None
+                err, rc = comm.plugn_start(plugn['name'], plugn['interval'], offset)
                 if err:
                     print(f"Error {err} starting {plugn['name']} on {smplr_name} " \
                            "Error: {rc}")
@@ -444,12 +452,10 @@ def add_producers(comms, producers, aggregators, agg_state, endpoints):
                 prod = prod_dict[prod_name]
                 ep_name = prod['endpoint']
                 endpoint = endpoints[ep_name]
-                interval_s = prod['reconnect']
-                interval_us=cvt_intrvl_str_to_us(interval_s)
                 comm.prdcr_add(
                             prod_name, prod['type'],
                             endpoint['xprt'], endpoint['addr'], endpoint['port'],
-                            interval_us)
+                            prod['reconnect'])
     return True
 
 def add_updaters(comms, updaters, aggregators, agg_state, hosts):
