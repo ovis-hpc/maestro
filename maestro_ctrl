@@ -164,7 +164,7 @@ class Cluster(object):
         prod_spec = config['producers']
         for prod in prod_spec:
             self.check_required([ 'names', 'endpoints', 'updaters',
-                                'reconnect', 'type', 'group' ],
+                                  'reconnect', 'type', 'group' ],
                                 prod, '"producer" entry')
             names = expand_names(prod['names'])
             endpoints = expand_names(prod['endpoints'])
@@ -179,7 +179,7 @@ class Cluster(object):
 
             # Expand and generate all the producers
             typ = prod['type']
-            reconnect = prod['reconnect']
+            reconnect = cvt_intrvl_str_to_us(prod['reconnect'])
             for name in names:
                 endpoint = endpoints.pop(0)
                 prod = {
@@ -217,6 +217,8 @@ class Cluster(object):
                 'sets'      : updtr_spec['sets'],
                 'producers' : updtr_spec['producers']
             }
+            if 'offset' in updtr_spec:
+                updtr['offset'] = updtr_spec['offset']
             if 'auto' in updtr_spec and 'push' in updtr_spec:
                 raise ValueError(f"The updater specification: {json.dumps(updtr_spec)} "
                                 "contains both 'push' and 'auto' which are "
@@ -387,13 +389,16 @@ class Cluster(object):
                         for sampler in self.samplers[smplr_group]['config']:
                             cfg_str = self.parse_to_cfg_str(sampler)
                             sname = sampler['name']
-                            interval = cvt_intrvl_str_to_us(sampler['interval'].split(':')[0])
-                            offset = cvt_intrvl_str_to_us(sampler['interval'].split(':')[1])
+                            interval = cvt_intrvl_str_to_us(sampler['interval'])
                             fd.write(f'load name={sname}\n')
                             fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
                                      f'component_id=${{COMPONENT_ID}} '+
                                      f'instance=${{HOSTNAME}}/{sname}\n')
-                            fd.write(f'start name={sname} interval={interval} offset={offset}\n')
+                            if 'offset' in sampler:
+                                offset = cvt_intrvl_str_to_us(sampler['offset'])
+                                fd.write(f'start name={sname} interval={interval} offset={offset}\n')
+                            else:
+                                fd.write(f'start name={sname} interval={interval}\n')
                     fd.close()
                 except Exception as e:
                     a, b, d = sys.exc_info()
@@ -457,10 +462,14 @@ class Cluster(object):
                     if group_name in self.updaters:
                         updtr_group = self.updaters[group_name]
                         for updtr in updtr_group:
-                            interval = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'].split(':')[0])
-                            offset = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'].split(':')[1])
-                            fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
-                                     f'interval={interval} offset={offset} auto_interval=true\n')
+                            interval = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'])
+                            if 'offset' in updtr_group[updtr]:
+                                offset = cvt_intrvl_str_to_us(updtr_group[updtr]['offset'])
+                                fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
+                                         f'interval={interval} offset={offset} auto_interval=true\n')
+                            else:
+                                fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
+                                         f'interval={interval} auto_interval=true\n')
                             for prod in updtr_group[updtr]['producers']:
                                 fd.write(f'updtr_prdcr_add name={updtr_group[updtr]["name"]} '+
                                          f'regex={prod["regex"]}\n')

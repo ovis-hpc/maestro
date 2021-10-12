@@ -5,18 +5,18 @@ endpoints:
     ports : &sampler-ports "[10002]"
     xprt : sock
     auth :
-      name  : munge
-      config  :
+      name   : munge
+      config :
         domain : samplers
 
-  - names : &l1-agg-endpoints "agg[1-3]" 
+  - names : &l1-agg-endpoints "agg[1-3]"
     group : &l1-agg "l1-agg"
     hosts : &agg-host "ovs-5416"
     ports : "[10101-10103]"
     xprt : sock
     auth :
-      name  : munge
-      config  :
+      name   : munge
+      config :
         domain : aggregators
 
   - names : &l2-agg-endpoints "agg-4"
@@ -25,20 +25,20 @@ endpoints:
     ports : "10104"
     xprt : sock
     auth :
-      name  : munge
-      config  :
+      name   : munge
+      config :
         domain : users
 
 groups:
   - endpoints : *sampler-endpoints
     name : samplers
-    interfaces : 
+    interfaces :
       - *sampler-hosts
 
   - endpoints : *l1-agg-endpoints
     name : *l1-agg
-    interfaces : 
-      - *sampler-hosts
+    interfaces :
+      - *sampler-endpoints
       - *l1-agg-endpoints
       - *l2-agg-endpoints
 
@@ -77,36 +77,41 @@ producers:
       - l2-all
 
 samplers:
-  - names       : *sampler-endpoints
-    group : samplers
+  - names  : *sampler-endpoints
+    group  : samplers
     config :
       - name        : meminfo # Variables can be specific to plugin
-        interval    : "1.0s:0ms" # Interval:offset format. Used when starting the sampler plugin
+        interval    : "1.0s" # Used when starting the sampler plugin
+        offset      : "0ms"
         perm        : "0777"
 
       - name        : vmstat
-        interval    : "1.0s:0ms"
+        interval    : "1.0s"
+        offset      : "0ms"
         perm        : "0777"
 
       - name        : procstat
-        interval    : "1.0s:0ms"
+        interval    : "1.0s"
+        offset      : "0ms"
         perm        : "0777"
 
 updaters:            
-- name  : all           # must be unique within group
-  group : *l1-agg
-  interval : "1.0s:0ms"
-  sets :
+- name     : all           # must be unique within group
+  group    : *l1-agg
+  interval : "1.0s"
+  offset   : "0ms"
+  sets     :
     - regex : .*        # regular expression matching set name or schema
       field : inst      # 'instance' or 'schema'
   producers :
     - regex : .*        # regular expression matching producer name
                         # this is evaluated on the Aggregator, not
                         # at configuration time'
-- name  : all           # must be unique within group
-  group : *l2-agg
-  interval : "1.0s:0ms"
-  sets :
+- name     : all           # must be unique within group
+  group    : *l2-agg
+  interval : "1.0s"
+  offset   : "0ms"
+  sets     :
     - regex : meminfo        # regular expression matching set name or schema
       field : inst      # 'instance' or 'schema'
   producers :
@@ -143,11 +148,11 @@ stores :
     group     : *l2-agg
     container : ldms_data
     schema    : meminfo
-    plugin :
-      name : store_csv
+    plugin    :
+      name   : store_csv
       config :
-        path        : /DATA15/orion/csv/orion
-        altheader   : 0
-        typeheader  : 1
-        create_uid  : 3031
-        create_gid  : 3031
+        path       : /DATA15/orion/csv/orion
+        altheader  : 0
+        typeheader : 1
+        create_uid : 3031
+        create_gid : 3031
