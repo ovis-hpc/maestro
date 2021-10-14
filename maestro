@@ -456,6 +456,13 @@ def add_producers(comms, producers, aggregators, agg_state, endpoints):
                             prod_name, prod['type'],
                             endpoint['xprt'], endpoint['addr'], endpoint['port'],
                             prod['reconnect'])
+                if 'subscribe' in prod:
+                    for sub in prod['subscribe']:
+                        if 'regex' in sub:
+                            regex = sub['regex']
+                        else:
+                            regex = '.*'
+                        comm.prdcr_subscribe(stream=sub['stream'], regex=regex)
     return True
 
 def add_updaters(comms, updaters, aggregators, agg_state, hosts):
