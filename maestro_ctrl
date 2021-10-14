@@ -172,6 +172,8 @@ class Cluster(object):
             if group not in producers:
                 producers[group] = []
 
+            if 'subscribe' in prod:
+                subscribe = prod['subscribe']
             if len(names) != len(endpoints):
                 raise ValueError('"producer": The "host" and "name" specifications must '
                                 'expand to the same number of strings')
@@ -190,6 +192,8 @@ class Cluster(object):
                     'reconnect' : reconnect,
                     'updaters'  : upd_spec
                 }
+                if subscribe:
+                    prod['subscribe'] = subscribe
                 producers[group].append(prod)
         return producers
 
