@@ -459,7 +459,13 @@ class Cluster(object):
                                 cfg_str = self.parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
                                 if 'stream' in self.plugins[group_name][plugin]['config']:
                                     # Will need to be updated for custom producer regex
-                                    fd.write(f'prdcr_subscribe stream={self.plugins[group_name][plugin]["config"]["stream"]} regex=.*\n')
+                                    if 'regex' in self.plugins[group_name][plugin]['config']:
+                                        regex = self.plugins[group_name][plugin]['config']
+                                        fd.write(f'prdcr_subscribe stream={self.plugins[group_name][plugin]["config"]["stream"]} '\
+                                                 f'regex={regex}\n')
+                                    else:
+                                        fd.write(f'prdcr_subscribe stream={self.plugins[group_name][plugin]["config"]["stream"]} '\
+                                                 f'regex=.*\n')
                                 fd.write(f'load name={plugin}\n')
                                 fd.write(f'config name={plugin} {cfg_str}\n\n')
 
@@ -495,16 +501,6 @@ class Cluster(object):
             except Exception as e:
                 ea, eb, ec = sys.exc_info()
                 print('Agg config Error: '+str(e)+' Line:'+str(ec.tb_lineno))
-
-    def config_v5(self):
-        pass
-
-    def config(self, version=4):
-        if version == 4:
-            return self.config_v4()
-        elif version == 5:
-            return self.config_v5()
-        raise ValueError("Version {0} is not recognized".format(version))
 
 def expand_names(name_spec):
     if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
