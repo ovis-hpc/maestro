@@ -100,6 +100,14 @@ def cvt_sample_intrvl_str_to_us(sample_intrvl_s):
         offset_us = 0
     return intrvl_us, offset_us
 
+def check_offset(interval_us, offset_us=None):
+    if offset_us:
+        if offset_us/interval_us > .5:
+            offset_us = interval_us/2
+    else:
+        offset_us = 0
+    return offset_us
+
 class Communicator(object):
     """Implements an interface between a client and an instance of an ldmsd daemon"""
     msg_hdr_len = 24
@@ -381,6 +389,7 @@ class Communicator(object):
                       LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(interval_us))
                     ]
         if offset_us != None:
+            offset_us = check_offset(interval_us, offset_us)
             req_attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset_us)))
         req = LDMSD_Request(
                 command_id = LDMSD_Request.PLUGN_START,
@@ -648,7 +657,7 @@ class Communicator(object):
             status = None
         return err, status
 
-    def updtr_add(self, name, interval=None, push=None, auto=None, perm=None):
+    def updtr_add(self, name, interval=None, offset=None, push=None, auto=None, perm=None):
         """
         Add an Updater that will periodically update Producer metric sets either
         by pulling the content or by registering for an update push. The default
@@ -683,12 +692,12 @@ class Communicator(object):
             LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name)
         ]
         if interval:
-            intrvl_us, offset_us = cvt_sample_intrvl_str_to_us(interval)
             if push or auto:
                 return errno.EINVAL, "EINVAL"
+            offset = check_offset(interval, offset)
             attrs += [
-                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(intrvl_us)),
-                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset_us))
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(interval)),
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset))
             ]
         elif push:
             if auto:
@@ -740,7 +749,7 @@ class Communicator(object):
             self.close()
             return errno.ENOTCONN, None
 
-    def updtr_start(self, name, interval=None, auto=None):
+    def updtr_start(self, name, interval=None, offset=None, auto=None):
         """
         Start a STOPPED updater.
 
@@ -748,8 +757,8 @@ class Communicator(object):
         - The name of the updater to start.
 
         Keyword Parameters:
-        interval  - The update data collection interval. This is required
-                    if auto is False.
+        interval  - The update data collection interval in microseconds.
+                    This is required if auto is False.
         auto      - [True|False] If True, the updater will schedule
                     set updates according to the update hint. The sets
                     with no hints will not be updated. If False, the
@@ -765,12 +774,12 @@ class Communicator(object):
             LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name),
         ]
         if interval:
-            intrvl_us, offset_us = cvt_sample_intrvl_str_to_us(interval)
+            offset = check_offset(interval, offset)
             if auto:
                 return errno.EINVAL, "'auto' is incompatible with 'interval'"
             attrs += [
-                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(intrvl_us)),
-                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset_us))
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(interval)),
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset))
             ]
         elif auto:
             attrs += [

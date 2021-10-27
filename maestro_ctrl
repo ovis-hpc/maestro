@@ -225,13 +225,13 @@ class Cluster(object):
                             "An updater name must be unique within the group")
             updtr = {
                 'name'      : updtr_name,
-                'interval'  : updtr_spec['interval'],
+                'interval'  : cvt_intrvl_str_to_us(updtr_spec['interval']),
                 'group'     : updtr_spec['group'],
                 'sets'      : updtr_spec['sets'],
                 'producers' : updtr_spec['producers']
             }
             if 'offset' in updtr_spec:
-                updtr['offset'] = updtr_spec['offset']
+                updtr['offset'] = cvt_intrvl_str_to_us(updtr_spec['offset'])
             if 'auto' in updtr_spec and 'push' in updtr_spec:
                 raise ValueError(f"The updater specification: {json.dumps(updtr_spec)} "
                                 "contains both 'push' and 'auto' which are "
