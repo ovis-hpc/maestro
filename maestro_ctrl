@@ -495,7 +495,7 @@ class Cluster(object):
                             fd.write(f'strgp_start name={store}\n')
             except Exception as e:
                 ea, eb, ec = sys.exc_info()
-                print('Agg config Error: '+str(e)+' Line:'+str(ec.tb_lineno))
+                print('Agg config Error: '+str(e)+'maestro_ctrl Line:'+str(ec.tb_lineno))
 
 def expand_names(name_spec):
     if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
