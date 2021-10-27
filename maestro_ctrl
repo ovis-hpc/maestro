@@ -495,8 +495,11 @@ class Cluster(object):
                                 loaded_plugins.append(store_group[store]["plugin"]["name"])
                             fd.write(f'strgp_add name={store} plugin={store_group[store]["plugin"]["name"]} '+
                                      f'container={store_group[store]["container"]} '+
-                                     f'schema={store_group[store]["schema"]} '+
-                                     f'flush={store_group[store]["flush"]}\n')
+                                     f'schema={store_group[store]["schema"]}')
+                            if "flush" in store_group[store]:
+                                fd.write(f'flush={store_group[store]["flush"]}')
+                            fd.write(f'\n')
+
                             fd.write(f'strgp_start name={store}\n')
             except Exception as e:
                 ea, eb, ec = sys.exc_info()
