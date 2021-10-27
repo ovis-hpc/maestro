@@ -19,7 +19,6 @@ def agg_hosts(grp_name, aggs, hosts):
 
 def sampler_hosts(ldmsds, hosts):
     return [ hosts[a] for a in ldmsds ]
-
 def cvt_intrvl_str_to_us(interval_s):
     """Converts a time interval string to microseconds
 
@@ -37,19 +36,37 @@ def cvt_intrvl_str_to_us(interval_s):
     '1.5S' - 1.5 seconds
     '2s'   - 2 seconds
     """
+    error_str = f"{interval_s} is not a valid time-interval string\n"\
+                f"'Only a single unit-string is allowed. e.g. '50s40us' is not a valid entry."\
+                f"Examples of acceptable format:\n"\
+                f"'1.5s' - 1.5 seconds\n"\
+                f"'1.5S' - 1.5 seconds\n"\
+                f"'2us'  - 2 microseconds\n"\
+                f"'3m'   - 3 minutes\n"\
+                f"\n"
+    if type(interval_s) != str:
+        raise ValueError(f"{error_str}")
     interval_s = interval_s.lower()
     if 'us' in interval_s:
         factor = 1
-        ival_s = interval_s.replace('us','')
+        if interval_s.split('us')[1] != '':
+            raise ValueError(f"{error_str}")
+        ival_s = interval_s.split('us')[0]
     if 'ms' in interval_s:
         factor = 1000
-        ival_s = interval_s.replace('ms','')
+        if interval_s.split('ms')[1] != '':
+            raise ValueError(f"{error_str}")
+        ival_s = interval_s.split('ms')[0]
     elif 's' in interval_s:
         factor = 1000000
-        ival_s = interval_s.replace('s','')
+        if interval_s.split('s')[1] != '':
+            raise ValueError(f"{error_str}")
+        ival_s = interval_s.split('s')[0]
     elif 'm' in interval_s:
         factor = 60000000
-        ival_s = interval_s.replace('m','')
+        if interval_s.split('m')[1] != '':
+            raise ValueError(f"{error_str}")
+        ival_s = interval_s.split('m')[0]
     try:
         mult = float(ival_s)
     except:
@@ -79,7 +96,7 @@ class MaestroMonitor(object):
         self.json_config = json.dumps(config)
         self.do_rebalance = False
         self.reset_conf()
-        self.comms = self.build_agg_comms()
+        self.comms = self.build_comms()
         self.etcd_event_handler = {
             'endpoints'   : self.__reconf_endpoints,
             'daemons'     : self.__reconf_daemons,
@@ -100,7 +117,7 @@ class MaestroMonitor(object):
         self.aggregators = self.config[self.prefix]['aggregators']
         self.updaters = self.config[self.prefix]['updaters']
 
-    def build_agg_comms(self):
+    def build_comms(self):
         comms = {}
         for grp_name in self.aggregators:
             comms[grp_name] = {}
@@ -127,7 +144,30 @@ class MaestroMonitor(object):
                                         agg_host['auth']['name'])
                 comms[grp_name][agg_host['name']] = comm
                 comm.connect()
+        for smplr_spec in self.samplers:
+            grp_name = self.samplers[smplr_spec]['group']
+            names = expand_names(smplr_spec)
+            comms[grp_name] = {}
+            for smplr_host in sampler_hosts(names, self.endpoints):
+                comm = Communicator(smplr_host['xprt'],
+                                    smplr_host['addr'],
+                                    smplr_host['port'],
+                                    smplr_host['auth']['name'])
+                comms[grp_name][smplr_host['name']] = comm
+                comm.connect()
         return comms
+
+    def check_samplers(self):
+        cfg_smplrs = {}            
+        for smplr_spec in self.samplers:
+            grp_name = self.samplers[smplr_spec]['group']
+            for sampler in self.comms[grp_name]:
+                rc, msg = self.comms[grp_name][sampler].smplr_status()
+                if rc:
+                    print(f'error with sampler {sampler}')
+                if len(msg) == 0:
+                    cfg_smplrs[sampler] = self.endpoints[sampler]
+        return cfg_smplrs
 
     def load_config(self):
         """
@@ -243,7 +283,9 @@ class MaestroMonitor(object):
                     remainder -= 1
                 groups[group].append({ "aggregator" : agg, "producers" : agg_prods })
 
-        start_samplers(self.samplers, self.endpoints) 
+        cfg_sampler_eps = self.check_samplers()
+        if cfg_sampler_eps:
+            start_samplers(self.samplers, cfg_sampler_eps)
         # Add all the producers to the aggregators. Any error here is not an issue
         # because all aggs have all producers, although, not all producers are started.
         add_producers(self.comms, self.producers, self.aggregators, agg_state, self.endpoints)
@@ -342,17 +384,17 @@ def start_samplers(samplers, hosts):
                 print(f"{smplr_name} configured. Starting... {plugin['name']}")
                 cfg_args = {}
                 if 'interval' in plugin:
-                    interval = plugin['interval']
+                    interval = cvt_intrvl_str_to_us(plugin['interval'])
                 else:
                     interval = 1000000
                 if 'offset' in plugin:
-                    offset = plugin['interval']
+                    offset = cvt_intrvl_str_to_us(plugin['offset'])
                 else:
                     offset = None
                 err, msg = comm.plugn_start(plugin['name'], interval, offset)
                 if err:
                     print(f"Error {err} starting {plugin['name']} on {smplr_name} "
-                           "Error: {msg}")
+                          f"Error: {msg}")
                     continue
             i += 1
     return True
@@ -408,10 +450,10 @@ def restart_samplers(samplers, hosts, config):
                 return False
             for plugn in config[smplr_spec]['config']:
                 if 'offset' in plugn:
-                    offset = plugn['offset']
+                    offset = cvt_intrvl_str_to_us(plugn['offset'])
                 else:
                     offset = None
-                err, rc = comm.plugn_start(plugn['name'], plugn['interval'], offset)
+                err, rc = comm.plugn_start(plugn['name'], cvt_intrvl_str_to_us(plugn['interval']), offset)
                 if err:
                     print(f"Error {err} starting {plugn['name']} on {smplr_name} " \
                            "Error: {rc}")
