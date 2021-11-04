@@ -12,66 +12,13 @@ import json
 import threading, queue
 import time
 from collections import Mapping, Set, Sequence
-from Communicator import Communicator
+from Communicator import Communicator, cvt_intrvl_str_to_us
 
 def agg_hosts(grp_name, aggs, hosts):
     return [ hosts[a['endpoint']] for a in aggs[grp_name] ]
 
 def sampler_hosts(ldmsds, hosts):
     return [ hosts[a] for a in ldmsds ]
-def cvt_intrvl_str_to_us(interval_s):
-    """Converts a time interval string to microseconds
-
-    A time-interval string is an integer or float follows by a
-    unit-string. A unit-string is any of the following:
-
-    's'  - seconds
-    'us' - microseconds
-    'm'  - minutes
-
-    Unit strings are not case-sensitive.
-
-    Examples:
-    '1.5s' - 1.5 seconds
-    '1.5S' - 1.5 seconds
-    '2s'   - 2 seconds
-    """
-    error_str = f"{interval_s} is not a valid time-interval string\n"\
-                f"'Only a single unit-string is allowed. e.g. '50s40us' is not a valid entry."\
-                f"Examples of acceptable format:\n"\
-                f"'1.5s' - 1.5 seconds\n"\
-                f"'1.5S' - 1.5 seconds\n"\
-                f"'2us'  - 2 microseconds\n"\
-                f"'3m'   - 3 minutes\n"\
-                f"\n"
-    if type(interval_s) != str:
-        raise ValueError(f"{error_str}")
-    interval_s = interval_s.lower()
-    if 'us' in interval_s:
-        factor = 1
-        if interval_s.split('us')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('us')[0]
-    if 'ms' in interval_s:
-        factor = 1000
-        if interval_s.split('ms')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('ms')[0]
-    elif 's' in interval_s:
-        factor = 1000000
-        if interval_s.split('s')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('s')[0]
-    elif 'm' in interval_s:
-        factor = 60000000
-        if interval_s.split('m')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('m')[0]
-    try:
-        mult = float(ival_s)
-    except:
-        raise ValueError(f"{interval_s} is not a valid time-interval string")
-    return int(mult * factor)
 
 def expand_names(name_spec):
     if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
@@ -164,8 +111,9 @@ class MaestroMonitor(object):
             for sampler in self.comms[grp_name]:
                 rc, msg = self.comms[grp_name][sampler].smplr_status()
                 if rc:
-                    print(f'error with sampler {sampler}')
-                if len(msg) == 0:
+                    print(f'Error code: {rc} getting {sampler} status\n')
+                    raise ECONNREFUSED
+                if msg is None:
                     cfg_smplrs[sampler] = self.endpoints[sampler]
         return cfg_smplrs
 
@@ -560,12 +508,16 @@ def add_stores(comms, stores, aggregators, agg_state, hosts):
                 plugin_config = plugin['config']
                 err, res = comm.plugn_load(plugin_name)
                 err, res = comm.plugn_config(plugin_name, **plugin_config)
-
+                if 'flush' in store:
+                    flush = cvt_intrvl_str_to_us(store['flush'])
+                else:
+                    flush = None
                 ## the stores may already exist, in which case the add will fail
                 err, res = comm.strgp_add(store_name,
                                           plugin_name,
                                           store['container'],
-                                          store['schema'])
+                                          store['schema'],
+                                          flush)
                 ## Add producers
                 err, res = comm.strgp_prdcr_add(store_name, ".*")
 
