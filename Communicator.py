@@ -63,42 +63,52 @@ def cvt_intrvl_str_to_us(interval_s):
     's'  - seconds
     'us' - microseconds
     'm'  - minutes
-    
+
     Unit strings are not case-sensitive.
 
     Examples:
-    '1.5s'     - 1.5 seconds
-    '1.5S'     - 1.5 seconds
-    '2s'       - 2 seconds
+    '1.5s' - 1.5 seconds
+    '1.5S' - 1.5 seconds
+    '2s'   - 2 seconds
     """
+    error_str = f"{interval_s} is not a valid time-interval string\n"\
+                f"'Only a single unit-string is allowed. e.g. '50s40us' is not a valid entry."\
+                f"Examples of acceptable format:\n"\
+                f"'1.5s' - 1.5 seconds\n"\
+                f"'1.5S' - 1.5 seconds\n"\
+                f"'2us'  - 2 microseconds\n"\
+                f"'3m'   - 3 minutes\n"\
+                f"\n"
+    if type(interval_s) == int:
+        return interval_s
+    if type(interval_s) != str:
+        raise ValueError(f"{error_str}")
     interval_s = interval_s.lower()
     if 'us' in interval_s:
         factor = 1
-        ival_s = interval_s.replace('us','')
+        if interval_s.split('us')[1] != '':
+            raise ValueError(f"{error_str}")
+        ival_s = interval_s.split('us')[0]
     if 'ms' in interval_s:
         factor = 1000
-        ival_s = interval_s.replace('ms','')
+        if interval_s.split('ms')[1] != '':
+            raise ValueError(f"{error_str}")
+        ival_s = interval_s.split('ms')[0]
     elif 's' in interval_s:
         factor = 1000000
-        ival_s = interval_s.replace('s','')
+        if interval_s.split('s')[1] != '':
+            raise ValueError(f"{error_str}")
+        ival_s = interval_s.split('s')[0]
     elif 'm' in interval_s:
         factor = 60000000
-        ival_s = interval_s.replace('m','')
+        if interval_s.split('m')[1] != '':
+            raise ValueError(f"{error_str}")
+        ival_s = interval_s.split('m')[0]
     try:
         mult = float(ival_s)
     except:
         raise ValueError(f"{interval_s} is not a valid time-interval string")
     return int(mult * factor)
-
-def cvt_sample_intrvl_str_to_us(sample_intrvl_s):
-    """Convert intrvl:offset string to two us values"""
-    s = sample_intrvl_s.split(':')
-    intrvl_us = cvt_intrvl_str_to_us(s[0])
-    if len(s) > 1:
-        offset_us = cvt_intrvl_str_to_us(s[1])
-    else:
-        offset_us = 0
-    return intrvl_us, offset_us
 
 def check_offset(interval_us, offset_us=None):
     if offset_us:
@@ -969,7 +979,7 @@ class Communicator(object):
             self.close()
             return errno.ENOTCONN, None
 
-    def strgp_add(self, name, plugin, container, schema, perm=0o600):
+    def strgp_add(self, name, plugin, container, schema, perm=0o777, flush=None):
         """
         Add a Storage Policy that will store metric set data when
         updates complete on a metric set.
@@ -994,8 +1004,10 @@ class Communicator(object):
             LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PLUGIN, value=plugin),
             LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.CONTAINER, value=container),
             LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.SCHEMA, value=schema),
-            LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PERM, value=str(perm))
+            LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PERM, value=str(perm)),
         ]
+        if flush != None:
+            attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(interval)))
         req = LDMSD_Request(command_id=LDMSD_Request.STRGP_ADD, attrs=attrs)
         try:
             req.send(self)
