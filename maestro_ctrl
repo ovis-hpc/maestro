@@ -350,13 +350,16 @@ class Cluster(object):
     def parse_to_cfg_str(self, cfg_obj):
         cfg_str = ''
         for key in cfg_obj:
-            if key != 'interval':
+            if not key in ('interval', 'offset'):
                 if len(cfg_str) > 8:
-                    cfg_str += ' '
-                cfg_str += key + '=' + str(cfg_obj[key])
+                    cfg_str += ' \\\n\t'
+                if cfg_obj[key] == None:
+                    cfg_str += key
+                else:
+                    cfg_str += key + '=' + str(cfg_obj[key])
         return cfg_str
 
-    def config_v4(self, path):
+    def config_v4(self, path, infile):
         """
         Read the group configuration from ETCD and generate a version 4 LDMSD configuration
         This configuration assumes that the environemnt variables COMPONENT_ID, HOSTNAME
@@ -375,6 +378,7 @@ class Cluster(object):
                             fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
                             for plugin in self.plugins[group_name]:
                                 cfg_str = self.parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
+                                fd.write(f'# ========\n')
                                 fd.write(f'load name={plugin}\n')
                                 fd.write(f'config name={plugin} {cfg_str}\n\n')
 
@@ -384,10 +388,12 @@ class Cluster(object):
                             continue
                         if fd is None:
                             fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
+                            fd.write(f'# samplers for {smplr_group} from {infile}\n')
                         for sampler in self.samplers[smplr_group]['config']:
                             cfg_str = self.parse_to_cfg_str(sampler)
                             sname = sampler['name']
                             interval = cvt_intrvl_str_to_us(sampler['interval'])
+                            fd.write(f'#========\n')
                             fd.write(f'load name={sname}\n')
                             fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
                                      f'component_id=${{COMPONENT_ID}} '+
@@ -479,7 +485,7 @@ class Cluster(object):
                                 fd.write(f'updtr_prdcr_add name={updtr_group[updtr]["name"]} '+
                                          f'regex={prod["regex"]}\n')
                             fd.write(f'updtr_start name={updtr_group[updtr]["name"]}\n')
-                    if group_name in self.stores:
+                    if self.stores and group_name in self.stores:
                         store_group = self.stores[group_name]
                         loaded_plugins = []
                         for store in store_group:
@@ -601,7 +607,8 @@ if __name__ == "__main__":
 
     cluster = Cluster(client, args.prefix, conf_spec)
     if args.generate_config_path:
-        cluster.config_v4(args.generate_config_path)
+        cluster.config_v4(args.generate_config_path,
+                          os.path.abspath(args.ldms_config))
         print("LDMSD v4 config files generated")
         sys.exit(0)
 
