@@ -1,0 +1,379 @@
+%YAML 1.1
+---
+# This file demonstrates a real cluster as DRY as we can get without
+# yaml processing changes or app changes.
+# notes on yaml lack of DRY-ness for our application:
+# There is no standard way to extend a list in yaml < 1.3 (can only extend map).
+#       We want 'list append' for lustre-mds and lustre-oss extending admin
+# There is no string concatenation or subst in yaml (must be done in app)
+#       Almost all mentions of schema, instance, name, producer are redundant
+#       but each has exception cases.
+# Misc notes:
+# All times (interval, offset, reconnect) should be explicitly quoted.
+# i.e.  pyyaml will implicitly quote some times and not others which will
+# cause input processing failures.
+
+cluster : clus
+defaults :
+  - l0_port : &l0-port "411"
+  - l1_port : &l1-port "413"
+  - rdma_sampler : &rdma_sampler
+      ports: *l0-port
+      xprt : rdma
+      auth :
+        name : ovis
+  - l0_producer: &l0_producer
+      group : l1-agg
+      reconnect : "20s"
+      type : active
+      updaters :
+        - l1-all
+
+sampler_options:
+  option-defaults : &option-defaults
+    plugin : plugin_unset
+    producer : ${HOSTNAME}
+    job_set : ${HOSTNAME}/jobid
+    component_id: ${COMPONENT_ID}
+    interval : "1s"
+    offset : "0s"
+    perm : "0644"
+    # these must be set manually on every sampler unless ldms supports ~{} expansion in the avl class
+    # name : ~{plugin}
+    # schema : ~{plugin}
+    # instance : ${HOSTNAME}/~{name}
+    # with the addition of ~{}, most samplers would reduce to a single option 'plugin'.
+  opt-dstat : &dstat
+    - <<: *option-defaults
+      plugin : dstat
+      schema : dstat
+      # schema is not wanted by this plugin
+      name : dstat
+      instance : ${HOSTNAME}/dstat
+      io : 1
+      stat : 1
+      statm : 1
+      fdtypes : 1
+      auto-schema : 1
+  opt-filesingle :  &filesingle
+    - <<: *option-defaults
+      plugin : filesingle
+      name : filesingle
+      instance : ${HOSTNAME}/filesingle
+      timing : 
+      interval : "60s"
+      schema : filesingle_cl_FIXME
+      conf : /FIXME/plugins-conf/filesingle.data.cl_FIXME
+      # aarch64 and x86_64 need alternate conf/schema
+  opt-ibmad : &ibmad
+    - <<: *option-defaults
+      plugin : ibmad
+      name : ibmad
+      schema : ibmad
+      instance : ${HOSTNAME}/ibmad
+  opt-jobid : &jobid
+    - <<: *option-defaults
+      plugin : jobid
+      name : jobid
+      schema : jobid
+      instance : ${HOSTNAME}/jobid
+      file : /var/run/ldms.slurm.jobinfo
+  opt-lnet_stats : &lnet_stats
+    - <<: *option-defaults
+      plugin : lnet_stats
+      name : lnet_stats
+      schema : lnet_stats
+      instance : ${HOSTNAME}/lnet_stats
+  opt-loadavg : &loadavg
+    - <<: *option-defaults
+      plugin : loadavg
+      name : loadavg
+      schema : loadavg
+      # schema is not wanted by this plugin
+      instance : ${HOSTNAME}/loadavg
+      metrics : load1min,load5min,load15min,runnable,scheduling_entities
+      interval : "10s"
+  opt-lustre_ost : &lustre_ost
+    - <<: *option-defaults
+      plugin : lustre_ost
+      name : lustre_ost
+      schema : lustre_ost
+      instance : ${HOSTNAME}/lustre_ost
+      interval : "60s"
+  opt-lustre_mdt : &lustre_mdt
+    - <<: *option-defaults
+      plugin : lustre_mdt
+      name : lustre_mdt
+      schema : lustre_mdt
+      instance : ${HOSTNAME}/lustre_mdt
+      interval : "60s"
+  opt-lustre_client : &lustre_client
+    - <<: *option-defaults
+      plugin : lustre_client
+      name : lustre_client
+      schema : lustre_client
+      instance : ${HOSTNAME}/lustre_client
+  opt-meminfo : &meminfo
+    - <<: *option-defaults
+      plugin : meminfo
+      name : meminfo
+      schema : meminfo
+      instance : ${HOSTNAME}/meminfo
+  opt-proc-pid : &proc-pid
+    - <<: *option-defaults
+      plugin : linux_proc_sampler
+      schema : proc-pid
+      name : proc-pid
+      instance : ${HOSTNAME}/proc-pid
+      interval : "10s"
+  opt-procnet : &procnet
+    - <<: *option-defaults
+      plugin : procnet
+      name : procnet
+      schema : procnet
+      instance : ${HOSTNAME}/procnet
+  opt-procnfs : &procnfs
+    - <<: *option-defaults
+      plugin : procnfs
+      name : procnfs
+      schema : procnfs
+      instance : ${HOSTNAME}/procnfs
+  opt-procstat : &procstat
+    - <<: *option-defaults
+      plugin : procstat
+      name : procstat
+      schema : procstat_112
+      instance : ${HOSTNAME}/procstat
+      maxcpu : 112
+  opt-tx2mon : &tx2mon
+    - <<: *option-defaults
+      plugin : tx2mon 
+      name : tx2mon 
+      # schema is not wanted by this plugin
+      schema : tx2mon
+      instance : ${HOSTNAME}/tx2mon
+      auto-schema : 1
+      array : 1
+      extra : 1
+      # aarch64 only
+  opt-vmstat : &vmstat
+    - <<: *option-defaults
+      plugin : vmstat
+      name : vmstat
+      schema : vmstat
+      instance : ${HOSTNAME}/vmstat
+
+endpoints:
+  - names : &compute "cl[1-2]-411"
+    hosts : &compute-hosts "cl[1-2]-ib0"
+    group : compute
+    <<: *rdma_sampler
+
+  - names : &login "clus-login[1-3]-411"
+    hosts : &login-hosts "clus-login[1-3]-ib0"
+    group : login
+    <<: *rdma_sampler
+
+  - names : &lustre-oss "closs[1-4]-411"
+    hosts : &lustre-oss-hosts "closs[1-4]-ib0"
+    group : lustre-oss
+    <<: *rdma_sampler
+
+  - names : &lustre-mds "clmds[1-2]-411"
+    hosts : &lustre-mds-hosts "clmds[1-2]-ib0"
+    group : lustre-mds
+    <<: *rdma_sampler
+
+  - names : &admin "clldms1-411,cladmin[1-3]-411"
+    hosts : &admin-hosts "clldms1-ib0,cladmin[1-3]-ib0"
+    group : admin
+    <<: *rdma_sampler
+
+  - names : &l1-agg-endpoints "clldms1-413" 
+    group : l1-agg
+    hosts : &agg-host "clldms1"
+    ports : *l1-port
+    xprt : sock
+    auth :
+      name : ovis
+
+groups:
+  - name : admin
+    endpoints : *admin
+    interfaces :
+      - *admin-hosts
+  - name : login
+    endpoints : *login
+    interfaces :
+      - *login-hosts
+  - name : compute
+    endpoints : *compute
+    interfaces :
+      - *compute-hosts
+  - name : lustre-oss
+    endpoints : *lustre-oss
+    interfaces :
+      - *lustre-oss-hosts
+  - name : lustre-mds
+    endpoints : *lustre-mds
+    interfaces :
+      - *lustre-mds-hosts
+  - name : l1-agg
+    endpoints : *l1-agg-endpoints
+    interfaces :
+      - *admin
+      - *login
+      - *compute
+      - *lustre-mds
+      - *lustre-oss
+
+aggregators:
+  - group : l1-agg
+    names : *l1-agg-endpoints
+    endpoints : *l1-agg-endpoints
+
+producers:
+  - names : *admin
+    endpoints : *admin
+    <<: *l0_producer
+  - names : *login
+    endpoints : *login
+    <<: *l0_producer
+  - names : *compute
+    endpoints : *compute
+    <<: *l0_producer
+  - names : *lustre-mds
+    endpoints : *lustre-mds
+    <<: *l0_producer
+  - names : *lustre-oss
+    endpoints : *lustre-oss
+    <<: *l0_producer
+
+updaters:            
+- name : all           # must be unique within group
+  group : l1-agg
+  interval : "1000ms"
+  offset : "1ms"
+  sets :
+    - regex : .*        # regular expression matching set name or schema
+      field : inst      # 'instance' or 'schema'
+  producers :
+    - regex : .*        # regular expression matching producer name
+                        # this is evaluated on the Aggregator, not
+                        # at configuration time'
+
+
+samplers:
+  - group : admin
+    names : *admin
+    config :
+      - <<: *jobid
+      - <<: *dstat
+        instance : ${HOSTNAME}-L1/dstat
+        interval : "60s"
+      - <<: *filesingle
+        interval : "60s"
+        schema : filesingle_x86_64
+        conf : /FIXME/sysconfig/ldms.d/plugins-conf/filesingle.data.x86_64
+      - <<: *ibmad
+        interval : "60s"
+      - <<: *loadavg
+        interval : "60s"
+      - <<: *meminfo
+        interval : "60s"
+      - <<: *proc-pid
+        interval : "60s"
+      - <<: *procnet
+        interval : "60s"
+      - <<: *procnfs
+        interval : "60s"
+      - <<: *procstat
+        interval : "60s"
+        schema : procstat_0
+        maxcpu : 0
+      - <<: *vmstat
+        interval : "60s"
+  - group : compute
+    names : *compute
+    config : &samplers-user-nodes
+      - <<: *jobid
+      - <<: *dstat
+      - <<: *filesingle
+        interval : "60s"
+        schema : filesingle_aarch64
+        conf : /FIXME/plugins-conf/filesingle.data.aarch64
+      - <<: *ibmad
+      - <<: *lnet_stats
+      - <<: *loadavg
+      - <<: *lustre_client
+      - <<: *meminfo
+      - <<: *proc-pid
+      - <<: *procnet
+      - <<: *procnfs
+      - <<: *procstat
+      - <<: *tx2mon
+      - <<: *vmstat
+  - group : login
+    names : *login
+    config : *samplers-user-nodes
+  - group : lustre-mds
+    names : *lustre-mds
+    config : 
+      - <<: *jobid
+      - <<: *dstat
+        interval : "60s"
+      - <<: *filesingle
+        interval : "60s"
+        schema : filesingle_x86_64
+        conf : /FIXME/sysconfig/ldms.d/plugins-conf/filesingle.data.x86_64
+      - <<: *ibmad
+        interval : "60s"
+      - <<: *proc-pid
+      - <<: *loadavg
+        interval : "60s"
+      - <<: *meminfo
+        interval : "60s"
+      - <<: *proc-pid
+        interval : "60s"
+      - <<: *procnet
+        interval : "60s"
+      - <<: *procnfs
+        interval : "60s"
+      - <<: *procstat
+        interval : "60s"
+        schema : procstat_0
+        maxcpu : 0
+      - <<: *vmstat
+        interval : "60s"
+      - <<: *lustre_mdt
+  - group : lustre-oss
+    names : *lustre-oss
+    config : 
+      - <<: *jobid
+      - <<: *dstat
+        interval : "60s"
+      - <<: *filesingle
+        interval : "60s"
+        schema : filesingle_x86_64
+        conf : /FIXME/plugins-conf/filesingle.data.x86_64
+      - <<: *ibmad
+        interval : "60s"
+      - <<: *proc-pid
+      - <<: *loadavg
+        interval : "60s"
+      - <<: *meminfo
+        interval : "60s"
+      - <<: *proc-pid
+        interval : "60s"
+      - <<: *procnet
+        interval : "60s"
+      - <<: *procnfs
+        interval : "60s"
+      - <<: *procstat
+        interval : "60s"
+        schema : procstat_0
+        maxcpu : 0
+      - <<: *vmstat
+        interval : "60s"
+      - <<: *lustre_ost
+...
