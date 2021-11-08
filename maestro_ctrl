@@ -2,14 +2,12 @@
 import os, sys
 import errno
 import yaml
-import hostlist
-import collections
 import argparse
 import etcd3
 import json
 import time
 from collections import Mapping, Sequence
-from Communicator import cvt_intrvl_str_to_us
+from maestro_util import cvt_intrvl_str_to_us, expand_names
 
 class Cluster(object):
     def emit_value(self, path, value):
@@ -366,7 +364,7 @@ class Cluster(object):
         return cfg_str
 
     def write_producers(self, fd, group_name):
-       #Writes producer configuration to file fd
+        #Writes producer configuration to file fd
         if group_name in self.producers:
             ''' Balance samplers across aggregators '''
             prdcrs = []
@@ -380,6 +378,12 @@ class Cluster(object):
                 idx = prdcrs.index(last_sampler) + 1
             prod_group = self.producers[group_name][idx:]
             i = 0
+            auth = self.endpoints[prod_group[0]['endpoint']]['auth']['name']
+            auth_opt = self.endpoints[prod_group[0]['endpoint']]['auth']['conf']
+            if auth:
+                if len(auth_opt.split('=')) == 1:
+                    auth_opt = 'conf='+auth_opt
+                fd.write(f'auth_add name={auth} {auth_opt}\n')
             for producer in prod_group:
                 if i >= loop:
                     break
@@ -536,15 +540,6 @@ class Cluster(object):
                 ea, eb, ec = sys.exc_info()
                 print('Agg config Error: '+str(e)+' Line:'+str(ec.tb_lineno))
                 raise ValueError
-
-def expand_names(name_spec):
-    if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
-        names = []
-        for name in name_spec:
-            names += hostlist.expand_hostlist(name)
-    else:
-        names = hostlist.expand_hostlist(name_spec)
-    return names
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
