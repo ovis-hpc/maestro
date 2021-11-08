@@ -3,31 +3,20 @@ import os, sys
 import subprocess
 import errno
 import yaml
-import hostlist
-import collections
 import copy
 import argparse
 import etcd3
 import json
 import threading, queue
 import time
-from collections import Mapping, Set, Sequence
-from Communicator import Communicator, cvt_intrvl_str_to_us
+from Communicator import Communicator
+from maestro_util import cvt_intrvl_str_to_us, expand_names
 
 def agg_hosts(grp_name, aggs, hosts):
     return [ hosts[a['endpoint']] for a in aggs[grp_name] ]
 
 def sampler_hosts(ldmsds, hosts):
     return [ hosts[a] for a in ldmsds ]
-
-def expand_names(name_spec):
-    if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
-        names = []
-        for name in name_spec:
-            names += hostlist.expand_hostlist(name)
-    else:
-        names = hostlist.expand_hostlist(name_spec)
-    return names
 
 class MaestroMonitor(object):
     def __init__(self, prefix, config, args):
@@ -435,9 +424,13 @@ def add_producers(comms, producers, aggregators, agg_state, endpoints):
                 agg_config = set({ prod['name'] for prod in res })
             add_prods = grp_prods - agg_config
             print(f"Adding {len(add_prods)} producers to agg {agg_name}")
-            ep = next(iter(add_prods))
-            auth = endpoints[ep]['auth']['name']
-            auth_opt = endpoints[ep]['auth']['conf']
+            if len(add_prods) > 0:
+                ep = next(iter(add_prods))
+                auth = endpoints[ep]['auth']['name']
+                auth_opt = endpoints[ep]['auth']['conf']
+            else:
+                auth = None
+                auth_opt = None
             if auth is not None:
                 rc, msg = comm.auth_add(auth, auth_opt)
                 if rc:
@@ -514,7 +507,7 @@ def add_stores(comms, stores, aggregators, agg_state, hosts):
                 err, res = comm.plugn_load(plugin_name)
                 err, res = comm.plugn_config(plugin_name, **plugin_config)
                 if 'flush' in store:
-                    flush = cvt_intrvl_str_to_us(store['flush'])
+                    flush = store['flush']
                 else:
                     flush = None
                 ## the stores may already exist, in which case the add will fail
@@ -522,7 +515,7 @@ def add_stores(comms, stores, aggregators, agg_state, hosts):
                                           plugin_name,
                                           store['container'],
                                           store['schema'],
-                                          flush)
+                                          flush=flush)
                 ## Add producers
                 err, res = comm.strgp_prdcr_add(store_name, ".*")
 
