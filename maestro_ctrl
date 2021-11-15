@@ -258,9 +258,9 @@ class Cluster(object):
         Return a dictionary keyed by the group name. Each dictionary
         entry is a list of stores in that group.
         """
-        stores = {}
         if 'stores' not in config:
             return None
+        stores = {}
         for store_spec in config['stores']:
             self.check_required([ 'name', 'group', 'plugin', 'container', 'schema' ],
                                 store_spec, '"store" entry')
@@ -285,6 +285,8 @@ class Cluster(object):
         Return a dictionary keyed by the samplers group name. Each dictionary
         entry is a single ldms daemon's sampler configuration.
         """
+        if 'samplers' not in config:
+            return None
         smplrs = {}
         for smplr_spec in config['samplers']:
             self.check_required([ 'names' ],
@@ -298,6 +300,8 @@ class Cluster(object):
         Return a dictionary keyed by the plugin's group name. Each dictionary entry
         is a single plugin's configuration.
         """
+        if 'plugins' not in config:
+            return None
         plugins = {}
         for plugn_spec in config['plugins']:
             self.check_required([ 'name', 'config' ],
@@ -325,14 +329,8 @@ class Cluster(object):
         self.producers = self.build_producers(cluster_config)
         self.updaters = self.build_updaters(cluster_config)
         self.stores = self.build_stores(cluster_config)
-        if 'samplers' in cluster_config:
-            self.samplers = self.build_samplers(cluster_config)
-        else:
-            self.samplers = None
-        if 'plugins' in cluster_config:
-            self.plugins = self.build_plugins(cluster_config)
-        else:
-            self.plugins = None
+        self.samplers = self.build_samplers(cluster_config)
+        self.plugins = self.build_plugins(cluster_config)
 
     def commit(self):
         pass
