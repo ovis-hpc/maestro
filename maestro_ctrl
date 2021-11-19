@@ -66,67 +66,63 @@ class Cluster(object):
 
         """
         ep_dict = {}
-        if 'endpoints' not in config:
-            return ep_dict
-
-        node_config = config['endpoints']
+        node_config = config['daemons']
         for spec in node_config:
-            self.check_required([ 'names', 'hosts', 'ports' ],
-                                spec, "host specification")
-            names = expand_names(spec['names'])
+            self.check_required([ 'names', 'endpoints', 'hosts' ],
+                                spec, "daemons specification")
             hosts = expand_names(spec['hosts'])
-            ports = expand_names(spec['ports'])
-            if 'xprt' in spec:
-                xprt = spec['xprt']
-            else:
-                xprt = 'sock'
-            if 'auth' in spec:
-                auth = spec['auth']
-                self.check_required([ 'name' ],
-                                    auth, "authentication configuration")
-                auth_name = auth['name']
-                if 'conf' in auth:
-                    auth_config = auth['conf']
+            for ep in spec['endpoints']:
+                self.check_required([ 'names', 'ports' ],
+                                      ep, 'endpoint specification')
+                if 'xprt' in spec:
+                    xprt = spec['xprt']
                 else:
-                    auth_config = ""
-            else:
-                auth_name = 'none'
-                auth_config = ""
-            group = spec['group']
-            # build compute for each host x port
-            for host in hosts:
-                for port in ports:
-                    name = names.pop(0)
-                    h = {
-                        'name'  : name,
-                        'group' : group,
-                        'addr'  : host,
-                        'port'  : port,
-                        'xprt'  : xprt,
-                        'auth'  : { 'name' : auth_name, 'conf' : auth_config }
-                    }
-                    ep_dict[name] = h
-
+                    xprt = 'sock'
+                if 'auth' in spec:
+                    auth = spec['auth']
+                    self.check_required([ 'name' ],
+                                        auth, "authentication configuration")
+                    auth_name = auth['name']
+                    if 'conf' in auth:
+                        auth_config = auth['conf']
+                    else:
+                        auth_config = None
+                else:
+                    auth_name = 'none'
+                    auth_config = None
+                names = expand_names(ep['names'])
+                ports = expand_names(ep['ports'])
+                # build compute for each host x port
+                for host in hosts:
+                    for port in ports:
+                        name = names.pop(0)
+                        h = {
+                            'name' : name,
+                            'addr' : host,
+                            'port' : port,
+                            'xprt' : xprt,
+                            'auth' : { 'name' : auth_name, 'conf' : auth_config }
+                        }
+                        ep_dict[name] = h
         return ep_dict
 
     def build_groups(self, config):
         groups = {}
-        if 'groups' not in config:
+        if 'daemons' not in config:
             return groups
-        group_conf = config['groups']
+        group_conf = config['daemons']
         for group_spec in group_conf:
-            self.check_required(['name', 'endpoints'],
+            self.check_required(['names', 'hosts', 'endpoints'],
                                 group_spec, "daemon specification")
-            endpoints = expand_names(group_spec['endpoints'])
-            group_name = group_spec['name']
-            if 'interfaces' in group_spec:
-                interfaces = expand_names(group_spec['interfaces'])
-            else:
-                interfaces= []
+            endpoints = []
+            for ep in group_spec['endpoints']:
+                endpoints += expand_names(ep['names'])
+            group_name = group_spec['names']
+            hosts = expand_names(group_spec['hosts'])
             group = {
                 'name'       : group_name,
+                'hosts'      : hosts,
                 'endpoints'  : endpoints,
-                'interfaces' : interfaces
             }
             groups[group_name] = group
         return groups
@@ -135,20 +131,27 @@ class Cluster(object):
         aggregators = {}
         if 'aggregators' not in config:
             return aggregators
-
         agg_conf = config['aggregators']
         for agg_spec in agg_conf:
-            self.check_required([ 'names', 'group', 'endpoints' ],
+            self.check_required([ 'daemons' ],
                                 agg_spec, "aggregator specification")
-
-            names = expand_names(agg_spec['names'])
-            group = agg_spec['group']
-            if group not in aggregators:
-                aggregators[group] = []
-            endpoints = expand_names(agg_spec['endpoints'])
+            names = expand_names(agg_spec['daemons'])
+            group = agg_spec['daemons']
+            endpoints = []
+            daemons_ = None
+            for daemons in config['daemons']:
+                if group == daemons['names']:
+                    daemons_ = daemons
+            if daemons_ is None:
+                raise ValueError(f"No daemons matched matched daemon key {group}")
+            for eps in daemons_['endpoints']:
+                if eps['maestro_comm'] is True:
+                    endpoints += expand_names(eps['names'])
             if len(names) != len(endpoints):
                 raise ValueError('"aggregators:" The "host" and "name" specifications must '
                                 'expand to the same number of names')
+            if group not in aggregators:
+                aggregators[group] = []
             for name in names:
                 endpoint = endpoints.pop(0)
                 agg = {
@@ -165,92 +168,86 @@ class Cluster(object):
         entry is a list of producers in that group.
         """
         producers = {}
-        if 'producers' not in config:
-            return producers
-        prod_spec = config['producers']
-        for prod in prod_spec:
-            self.check_required([ 'names', 'endpoints', 'updaters',
-                                  'reconnect', 'type', 'group' ],
-                                prod, '"producer" entry')
-            names = expand_names(prod['names'])
-            endpoints = expand_names(prod['endpoints'])
-            group = prod['group']
-            if group not in producers:
-                producers[group] = []
+        for agg in config['aggregators']:
+            if 'peers' not in agg:
+                continue
+            for prod in agg['peers']:
+                self.check_required([ 'endpoints', 'updaters',
+                                      'reconnect', 'type', ],
+                                      prod, '"producer" entry')
+                names = expand_names(prod['endpoints'])
+                endpoints = expand_names(prod['endpoints'])
+                group = agg['daemons']
+                if group not in producers:
+                    producers[group] = []
 
-            if 'subscribe' in prod:
-                subscribe = prod['subscribe']
-            else:
-                subscribe = None
-            if 'auth' in prod:
-                auth = prod['auth']
-            else:
-                auth = None
-            if len(names) != len(endpoints):
-                raise ValueError('"producer": The "host" and "name" specifications must '
-                                'expand to the same number of strings')
-            upd_spec = prod['updaters']
-
-            # Expand and generate all the producers
-            typ = prod['type']
-            reconnect = cvt_intrvl_str_to_us(prod['reconnect'])
-            for name in names:
-                endpoint = endpoints.pop(0)
-                smplr_group = self.endpoints[endpoint]['group']
-                prod = {
-                    'name'      : name,
-                    'endpoint'  : endpoint,
-                    'type'      : typ,
-                    'group'     : smplr_group,
-                    'reconnect' : reconnect,
-                    'updaters'  : upd_spec,
-                    'auth'      : auth
-                }
-                if subscribe:
-                    prod['subscribe'] = subscribe
-                producers[group].append(prod)
+                if 'subscribe' in prod:
+                    subscribe = prod['subscribe']
+                else:
+                    subscribe = None
+                if len(names) != len(endpoints):
+                    raise ValueError('"producer": The "host" and "name" specifications must '
+                                    'expand to the same number of strings')
+                upd_spec = prod['updaters']
+                # Expand and generate all the producers
+                typ = prod['type']
+                reconnect = cvt_intrvl_str_to_us(prod['reconnect'])
+                for name in names:
+                    endpoint = endpoints.pop(0)
+                    prod = {
+                        'name'      : name,
+                        'endpoint'  : endpoint,
+                        'type'      : typ,
+                        'group'     : group,
+                        'reconnect' : reconnect,
+                        'updaters'  : upd_spec
+                    }
+                    if subscribe:
+                        prod['subscribe'] = subscribe
+                    producers[group].append(prod)
         return producers
 
     def build_updaters(self, config):
         """
-        Return a dictionary keyed by the group name. Each dictionary
+        Return a dictionary based on the aggregator. Each dictionary
         entry is a list of updaters in that group.
         """
         updaters = {}
-        if 'updaters' not in config:
-            return updaters
-        for updtr_spec in config['updaters']:
-            self.check_required([ 'name', 'group', 'interval', 'sets', 'producers' ],
-                                updtr_spec, '"updater" entry')
-            group = updtr_spec['group']
-            if group not in updaters:
-                updaters[group] = {}
-            grp_updaters = updaters[group]
-            updtr_name = updtr_spec['name']
-            if updtr_name in grp_updaters:
-                raise ValueError(f"Duplicate updater name '{updtr_name}''. "
-                            "An updater name must be unique within the group")
-            updtr = {
-                'name'      : updtr_name,
-                'interval'  : cvt_intrvl_str_to_us(updtr_spec['interval']),
-                'group'     : updtr_spec['group'],
-                'sets'      : updtr_spec['sets'],
-                'producers' : updtr_spec['producers']
-            }
-            if 'offset' in updtr_spec:
-                updtr['offset'] = cvt_intrvl_str_to_us(updtr_spec['offset'])
-            else:
-                updtr['offset'] = None
-            if 'auto' in updtr_spec and 'push' in updtr_spec:
-                raise ValueError(f"The updater specification: {json.dumps(updtr_spec)} "
-                                "contains both 'push' and 'auto' which are "
-                                "mutually exclusive")
-            if 'auto' in updtr_spec:
-                updtr['auto'] = updtr_spec['auto']
-            if 'push' in updtr_spec:
-                updtr['push'] = updtr_spec['push']
-
-            grp_updaters[updtr_name] = updtr
+        updtr_cnt = 0
+        for agg in config['aggregators']:
+            if 'peers' not in agg:
+                continue
+            for prod in agg['peers']:
+                for updtr_spec in prod['updaters']:
+                    self.check_required([ 'interval', 'sets', ],
+                                        updtr_spec, '"updater" entry')
+                    group = agg['daemons']
+                    if group not in updaters:
+                        updaters[group] = {}
+                    grp_updaters = updaters[group]
+                    updtr_name = f'updtr_{updtr_cnt}'
+                    if updtr_name in grp_updaters:
+                        raise ValueError(f"Duplicate updater name '{updtr_name}''. "\
+                                         f"An updater name must be unique within the group")
+                    updtr = {
+                        'name'      : updtr_name,
+                        'interval'  : cvt_intrvl_str_to_us(updtr_spec['interval']),
+                        'group'     : agg['daemons'],
+                        'sets'      : updtr_spec['sets'],
+                        'producers' : [{ 'regex' : '.*' }]
+                    }
+                    if 'offset' in updtr_spec:
+                        updtr['offset'] = cvt_intrvl_str_to_us(updtr_spec['offset'])
+                    if 'auto' in updtr_spec and 'push' in updtr_spec:
+                        raise ValueError(f"The updater specification: {json.dumps(updtr_spec)} "
+                                          "contains both 'push' and 'auto' which are "
+                                          "mutually exclusive")
+                    if 'auto' in updtr_spec:
+                        updtr['auto'] = updtr_spec['auto']
+                    if 'push' in updtr_spec:
+                        updtr['push'] = updtr_spec['push']
+                    grp_updaters[updtr_name] = updtr
+                    updtr_cnt += 1
         return updaters
 
     def build_stores(self, config):
@@ -262,9 +259,9 @@ class Cluster(object):
             return None
         stores = {}
         for store_spec in config['stores']:
-            self.check_required([ 'name', 'group', 'plugin', 'container', 'schema' ],
+            self.check_required([ 'name', 'plugin', 'container', 'schema' ],
                                 store_spec, '"store" entry')
-            group = store_spec['group']
+            group = store_spec['daemons']
             if group not in stores:
                 stores[group] = {}
             grp_stores = stores[group]
@@ -289,9 +286,9 @@ class Cluster(object):
             return None
         smplrs = {}
         for smplr_spec in config['samplers']:
-            self.check_required([ 'names' ],
+            self.check_required([ 'daemons', 'config' ],
                                   smplr_spec, '"sampler" entry')
-            smplrs[smplr_spec['names']] = smplr_spec
+            smplrs[smplr_spec['daemons']] = smplr_spec
         return smplrs
 
     def build_plugins(self, config):
@@ -511,7 +508,7 @@ class Cluster(object):
                     self.write_sampler_plugins(self)
                     for smplr_group in self.samplers:
                         # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
-                        if group_name != self.samplers[smplr_group]['group']:
+                        if group_name != smplr_group:
                             continue
                         fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
                         self.write_samplers(fd, smplr_group)
