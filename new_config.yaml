@@ -1,0 +1,110 @@
+daemons:
+  - names : &samplers "sampler-[1-10]"
+    hosts : &node-hosts "node-[1-10]"
+    endpoints :
+      - names : &sampler-endpoints "node-[1-10]-[10002]"
+        ports : &sampler-ports "[10002]"
+        maestro_comm : True
+        xprt  : sock
+        auth  :
+           name : munge
+
+      - names : &sampler-rdma-endpoints "node-[1-10]-10002/rdma"
+        ports : *sampler-ports
+        maestro_comm : False
+        xprt  : rdma
+        auth  :
+          name : munge
+
+  - names : &l1-agg "l1-aggs-[11-14]"
+    hosts : &l1-agg-hosts "node-[11-14]"
+    endpoints :
+      - names : &l1-agg-endpoints "node-[11-14]-[10101]"
+        ports : &agg-ports "[10101]"
+        maestro_comm : True
+        xprt  : sock
+        auth  :
+          name : munge
+
+  - names : &l2-agg "l2-agg"
+    hosts : &l2-agg-host "node-15"
+    endpoints :
+      - names : &l2-agg-endpoints "node-[15]"
+        ports : "[10104]"
+        maestro_comm : True
+        xprt  : sock
+        auth  :
+          name : munge
+
+aggregators:
+  - daemons   : *l1-agg
+    peers     :
+      - endpoints : *sampler-endpoints
+        reconnect : 20s
+        type      : active
+        updaters  :
+          - mode     : pull
+            interval : 1.0s
+            offset   : "0ms"
+            sets     :
+              - regex : .*
+                field : inst
+
+  - daemons   : *l2-agg
+    peers     :
+      - endpoints : *l1-agg-endpoints
+        reconnect : 20s
+        type      : active
+        updaters  :
+          - mode : pull
+            interval : "1.0s"
+            offset   : "0ms"
+            sets     :
+              - regex : .*
+                field : inst
+
+samplers:
+    config :
+      - name        : meminfo # Variables can be specific to plugin
+        interval    : "1.0s" # Used when starting the sampler plugin
+        offset      : "0ms"
+        perm        : "0777"
+
+      - name        : vmstat
+        interval    : "1.0s"
+        offset      : "0ms"
+        perm        : "0777"
+
+      - name        : procstat
+        interval    : "1.0s"
+        offset      : "0ms"
+        perm        : "0777"
+
+stores:
+  - name      : sos-meminfo
+    daemons   : *l2-agg
+    container : ldms_data
+    schema    : meminfo
+    flush     : 10s
+    plugin :
+      name   : store_sos
+      config : { path : /DATA }
+
+  - name      : sos-vmstat
+    daemons   : *l2-agg
+    container : ldms_data
+    schema    : vmstat
+    flush     : 10s
+    plugin :
+      name   : store_sos
+      config : { path : /DATA }
+
+  - name      : sos-procstat
+    daemons   : *l2-agg
+    container : ldms_data
+    schema    : procstat
+    flush     : 10s
+    plugin :
+      name   : store_sos
+      config : { path : /DATA }
+
