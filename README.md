@@ -26,8 +26,8 @@ https://github.com/etcd-io/etcd
 
 ## Configuration Generation
 A ldms cluster's configuration can be generated with the maestro_ctrl
-command. The current implementation of the generator will generate 
-ldmsd configuration files for each group in the ldmsd cluster config.
+command. The current implementation of the generator will generate
+v4 ldmsd configuration files for each group in the ldmsd cluster config.
 The generator will automatically "balance" samplers across aggregators,
 if sampler's are loaded by multiple aggregators, effectively creating
 a unique configuration file for each aggregator in a group.
@@ -44,7 +44,7 @@ There are two configuration files consumed by __maestro__:
 1. A file that defines the _etcd_ cluster configuration
 2. A file that defines the LDMS Cluster Configuration
 
-There are two principle commands, maestro and maestro_ctrl. maestro will run the load balancing daemon, as well as start/configure the ldmsd's. maestro_ctrl parses a yaml ldms cluster configuration file, and loads it into the etcd cluster configuration. Both commands are demonstrated below:
+There are two principle commands, maestro and maestro_ctrl. maestro will run the load balancing daemon, as well as start/configure ldmsd's. maestro_ctrl parses a yaml ldms cluster configuration file, and loads it into a etcd key/value store. Both commands are demonstrated below:
 
     maestro --cluster config/etcd.yaml --prefix orion
 
@@ -74,190 +74,138 @@ members:
     port: 2379
 ```
 
-And here is an example of a LDMS Cluster Configuration File:
+###LDMS Cluster Configuration
+The primary configuration groups are
+daemons
+	- defines LDMS daemons, their hosts, ports, and endpoints
+aggregators
+	- defines aggregator configuration ldmsd's
+samplers
+	- defines sampler configuration for ldmsd's
+stores
+	- defines the various stores for aggregators
 
+###Example LDMS Configuration
 ```yaml
-endpoints:
-  - names : &sampler-endpoints "nid[00012-00200]"
-    group : samplers
-    hosts : &sampler-hosts "nid[00012-00200]"
-    ports : "10001"
-    xprt : sock
-    auth :
-      name  : munge
-      config  :
-          domain : samplers
+daemons:
+  - names : &samplers "sampler-[1-10]"
+    hosts : &node-hosts "node-[1-10]"
+    endpoints :
+      - names : &sampler-endpoints "node-[1-10]-[10002]"
+        ports : &sampler-ports "[10002]"
+        maestro_comm : True
+        xprt  : sock
+        auth  :
+           name : munge
 
-  - names : &l1-agg-endpoints "agg-[11-14]"
-    group : &l1 "l1-agg"
-    hosts : &l1-agg-hosts "nid00002"
-    ports : "[30011-30014]"
-    xprt : sock
-    auth :
-      name  : munge
-      config  :
-        domain : aggregators
+      - names : &sampler-rdma-endpoints "node-[1-10]-10002/rdma"
+        ports : *sampler-ports
+        maestro_comm : False
+        xprt  : rdma
+        auth  :
+          name : munge
 
-  - names : &l2-agg-endpoints "agg-[21,22]"
-    group : &l2 "l2-agg"
-    hosts : &l2-agg-hosts "nid00003"
-    ports : "[30021,30022]"
-    xprt : sock
-    auth :
-      name  : munge
-      config  :
-        domain : aggregators
+  - names : &l1-agg "l1-aggs-[11-14]"
+    hosts : &l1-agg-hosts "node-[11-14]"
+    endpoints :
+      - names : &l1-agg-endpoints "node-[11-14]-[10101]"
+        ports : &agg-ports "[10101]"
+        maestro_comm : True
+        xprt  : sock
+        auth  :
+          name : munge
 
-  - names : &l3-agg-endpoints "agg-31"
-    group : &l3 "l3-agg"
-    hosts : &l3-agg-hosts "nid00004"
-    ports : "30031"
-    xprt : sock
-    auth :
-      name  : munge
-      config  :
-        domain : users
-
-groups:
-  - endpoints : *sampler-endpoints
-    name : samplers
-    interfaces :
-      - *sampler-hosts
-
-  - endpoints : *l1-agg-endpoints
-    name : *l1
-    interfaces :
-      - *sampler-hosts
-      - *l1-agg-endpoints
-      - *l2-agg-endpoints
-
-  - endpoints : *l2-agg-endpoints
-    name : *l2
-    interfaces :
-      - *l1-agg-endpoints
-      - *l2-agg-endpoints
+  - names : &l2-agg "l2-agg"
+    hosts : &l2-agg-host "node-15"
+    endpoints :
+      - names : &l2-agg-endpoints "node-[15]"
+        ports : "[10104]"
+        maestro_comm : True
+        xprt  : sock
+        auth  :
+          name : munge
 
 aggregators:
-  - names     : *l1-agg-endpoints
-    endpoints : *l1-agg-endpoints
-    group     : *l1
+  - daemons   : *l1-agg
+    peers     :
+      - endpoints : *sampler-endpoints
+        reconnect : 20s
+        type      : active
+        updaters  :
+          - mode     : pull
+            interval : "1.0s"
+            offset   : "0ms"
+            sets     :
+              - regex : .*
+                field : inst
 
-  - names     : *l2-agg-endpoints
-    endpoints : *l2-agg-endpoints
-    group     : *l2
-
-  - names     : *l3-agg-endpoints
-    endpoints : *l3-agg-hosts*
-    group     : *l3
+  - daemons   : *l2-agg
+    peers     :
+      - endpoints : *l1-agg-endpoints
+        reconnect : 20s
+        type      : active
+        updaters  :
+          - mode : pull
+            interval : "1.0s"
+            offset   : "0ms"
+            sets     :
+              - regex : .*
+                field : inst
 
 samplers:
-  - names       : *sampler-endpoints
-    group : samplers
+  - daemons : *samplers
     config :
       - name        : meminfo # Variables can be specific to plugin
-        interval    : "1.0s:0ms" # Interval:offset format. Used when starting the plugin
+        interval    : "1.0s" # Used when starting the sampler plugin
+        offset      : "0ms"
         perm        : "0777"
 
       - name        : vmstat
-        interval    : "1.0s:0ms" # Interval:offset format. Used when starting the plugin
+        interval    : "1.0s"
+        offset      : "0ms"
         perm        : "0777"
 
-producers:
-# This informs the L1 load balance group what is being distributed across
-# the L1 aggregator nodes
-  - names     : *sampler-endpoints
-    endpoints : *sampler-endpoints
-    group     : *l1
-    reconnect : 20s
-    type      : active
-    updaters  :
-      - l1-all
+      - name        : procstat
+        interval    : "1.0s"
+        offset      : "0ms"
+        perm        : "0777"
 
-# This informs the L2 load balance group what is being distributed across
-# the L2 aggregator nodes
-  - names      : *l1-agg-endpoints
-    endpoints  : *l1-agg-endpoints
-    group      : *l2
-    reconnect  : 20s
-    type       : active
-    updaters   :
-      - l2-all
-
-# This informs the L3 load balance group what is being distributed across
-# the L3 aggregator node
-  - names      : *l2-agg-endpoints
-    endpoints  : *l2-agg-endpoints
-    group      : *l3
-    reconnect  : 20s
-    type       : active
-    updaters  :
-      - l3-all
-
-
-updaters:
-- name  : all           # must be unique within group
-  group : *l1
-  interval : "1.0s:0ms"
-  sets :
-    - regex : .*        # regular expression matching set name or schema
-      field : inst      # 'instance' or 'schema'
-  producers :
-    - regex : .*        # regular expression matching producer name
-                        # this is evaluated on the Aggregator, not
-                        # at configuration time'
-- name  : all
-  group : *l2
-  interval : "1.0s:250ms"
-  sets :
-    - regex : .*
-      field : inst
-  producers :
-    - regex : .*
-
-- name  : all
-  group : *l3
-  interval : "1.0s:500ms"
-  sets :
-    - regex : .*
-      field : inst
-  producers :
-    - regex : .*
-
-stores :
+stores:
   - name      : sos-meminfo
-    group     : *l3
+    daemons   : *l2-agg
     container : ldms_data
     schema    : meminfo
+    flush     : 10s
     plugin :
       name   : store_sos
-      config : { path            : /DATA15/orion,
-                 commit_interval : 600
-      }
+      config : { path : /DATA }
 
   - name      : sos-vmstat
-    group     : *l3
+    daemons   : *l2-agg
     container : ldms_data
     schema    : vmstat
+    flush     : 10s
     plugin :
       name   : store_sos
-      config : { path : /DATA15/orion }
+      config : { path : /DATA }
 
   - name      : sos-procstat
-    group     : *l3
+    daemons   : *l2-agg
     container : ldms_data
     schema    : procstat
+    flush     : 10s
     plugin :
       name   : store_sos
-      config : { path : /DATA15/orion }
+      config : { path : /DATA }
 
   - name : csv
-    group     : *l3
+    daemons   : *l2-agg
     container : ldms_data
     schema    : meminfo
     plugin :
       name : store_csv
       config :
-        path        : /DATA15/orion/csv/orion
+        path        : /DATA/csv/
         altheader   : 0
         typeheader  : 1
         create_uid  : 3031
