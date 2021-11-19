@@ -67,15 +67,11 @@ class MaestroMonitor(object):
                                     '-m', '2g',
                                     '-r', 'log/'+agg_host['name']+'.pid'])
 
-                if 'conf' in agg_host['auth']:
-                    conf = agg_host['auth']['conf']
-                else:
-                    conf = None
                 comm = Communicator(agg_host['xprt'],
                                     agg_host['addr'],
                                     agg_host['port'],
                                     agg_host['auth']['name'],
-                                    { 'conf' : conf })
+                                    {'conf' : agg_host['auth']['conf']})
                 comms[grp_name][agg_host['name']] = comm
                 comm.connect()
         for smplr_spec in self.samplers:
