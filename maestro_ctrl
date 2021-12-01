@@ -94,16 +94,18 @@ class Cluster(object):
             else:
                 auth_name = 'none'
                 auth_config = ""
+            group = spec['group']
             # build compute for each host x port
             for host in hosts:
                 for port in ports:
                     name = names.pop(0)
                     h = {
-                        'name' : name,
-                        'addr' : host,
-                        'port' : port,
-                        'xprt' : xprt,
-                        'auth' : { 'name' : auth_name, 'conf' : auth_config }
+                        'name'  : name,
+                        'group' : group,
+                        'addr'  : host,
+                        'port'  : port,
+                        'xprt'  : xprt,
+                        'auth'  : { 'name' : auth_name, 'conf' : auth_config }
                     }
                     ep_dict[name] = h
 
@@ -182,6 +184,10 @@ class Cluster(object):
                 subscribe = prod['subscribe']
             else:
                 subscribe = None
+            if 'auth' in prod:
+                auth = prod['auth']
+            else:
+                auth = None
             if len(names) != len(endpoints):
                 raise ValueError('"producer": The "host" and "name" specifications must '
                                 'expand to the same number of strings')
@@ -192,13 +198,15 @@ class Cluster(object):
             reconnect = cvt_intrvl_str_to_us(prod['reconnect'])
             for name in names:
                 endpoint = endpoints.pop(0)
+                smplr_group = self.endpoints[endpoint]['group']
                 prod = {
                     'name'      : name,
                     'endpoint'  : endpoint,
                     'type'      : typ,
-                    'group'     : group,
+                    'group'     : smplr_group,
                     'reconnect' : reconnect,
-                    'updaters'  : upd_spec
+                    'updaters'  : upd_spec,
+                    'auth'      : auth
                 }
                 if subscribe:
                     prod['subscribe'] = subscribe
