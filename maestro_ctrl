@@ -93,16 +93,18 @@ class Cluster(object):
             else:
                 auth_name = 'none'
                 auth_config = ""
+            group = spec['group']
             # build compute for each host x port
             for host in hosts:
                 for port in ports:
                     name = names.pop(0)
                     h = {
-                        'name' : name,
-                        'addr' : host,
-                        'port' : port,
-                        'xprt' : xprt,
-                        'auth' : { 'name' : auth_name, 'conf' : auth_config }
+                        'name'  : name,
+                        'group' : group,
+                        'addr'  : host,
+                        'port'  : port,
+                        'xprt'  : xprt,
+                        'auth'  : { 'name' : auth_name, 'conf' : auth_config }
                     }
                     ep_dict[name] = h
 
@@ -181,6 +183,10 @@ class Cluster(object):
                 subscribe = prod['subscribe']
             else:
                 subscribe = None
+            if 'auth' in prod:
+                auth = prod['auth']
+            else:
+                auth = None
             if len(names) != len(endpoints):
                 raise ValueError('"producer": The "host" and "name" specifications must '
                                 'expand to the same number of strings')
@@ -191,13 +197,15 @@ class Cluster(object):
             reconnect = cvt_intrvl_str_to_us(prod['reconnect'])
             for name in names:
                 endpoint = endpoints.pop(0)
+                smplr_group = self.endpoints[endpoint]['group']
                 prod = {
                     'name'      : name,
                     'endpoint'  : endpoint,
                     'type'      : typ,
-                    'group'     : group,
+                    'group'     : smplr_group,
                     'reconnect' : reconnect,
-                    'updaters'  : upd_spec
+                    'updaters'  : upd_spec,
+                    'auth'      : auth
                 }
                 if subscribe:
                     prod['subscribe'] = subscribe
@@ -426,6 +434,12 @@ class Cluster(object):
                             idx = prdcrs.index(last_sampler) + 1
                         prod_group = self.producers[group_name][idx:]
                         i = 0
+                        auth = self.endpoints[prod_group[0]['endpoint']]['auth']['name']
+                        auth_opt = self.endpoints[prod_group[0]['endpoint']]['auth']['conf']
+                        if auth:
+                            if len(auth_opt.split('=')) == 1:
+                                auth_opt = 'conf='+auth_opt
+                            fd.write(f'auth_add name={auth} {auth_opt}\n')
                         for producer in prod_group:
                             if i >= loop:
                                 break
@@ -439,7 +453,11 @@ class Cluster(object):
                             fd.write(f'prdcr_add name={pname} '+
                                      f'host={hostname} '+
                                      f'port={port} '+
-                                     f'xprt={xprt} type={ptype} interval={interval}\n')
+                                     f'xprt={xprt} type={ptype} interval={interval}')
+                            if auth:
+                                fd.write(f' auth={auth}\n')
+                            else:
+                                fd.write(f'\n')
                             last_sampler = pname
                             i += 1
                             if 'regex' in producer:
@@ -531,7 +549,9 @@ def cvt_intrvl_str_to_us(interval_s):
                 f"'2us'  - 2 microseconds\n"\
                 f"'3m'   - 3 minutes\n"\
                 f"\n"
-    if type(interval_s) != str:
+    if type(interval_s) == int:
+        return interval_s
+    elif type(interval_s) != str:
         raise ValueError(f"{error_str}")
     interval_s = interval_s.lower()
     if 'us' in interval_s:

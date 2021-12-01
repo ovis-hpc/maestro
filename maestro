@@ -44,7 +44,9 @@ def cvt_intrvl_str_to_us(interval_s):
                 f"'2us'  - 2 microseconds\n"\
                 f"'3m'   - 3 minutes\n"\
                 f"\n"
-    if type(interval_s) != str:
+    if type(interval_s) is int:
+        return interval_s
+    elif type(interval_s) != str:
         raise ValueError(f"{error_str}")
     interval_s = interval_s.lower()
     if 'us' in interval_s:
@@ -132,16 +134,14 @@ class MaestroMonitor(object):
                                     '-r', 'log/'+agg_host['name']+'.pid'])
 
                 if 'conf' in agg_host['auth']:
-                    comm = Communicator(agg_host['xprt'],
-                                        agg_host['addr'],
-                                        agg_host['port'],
-                                        agg_host['auth']['name'],
-                                        {'conf' : agg_host['auth']['conf']})
+                    conf = agg_host['auth']['conf']
                 else:
-                    comm = Communicator(agg_host['xprt'],
-                                        agg_host['addr'],
-                                        agg_host['port'],
-                                        agg_host['auth']['name'])
+                    conf = None
+                comm = Communicator(agg_host['xprt'],
+                                    agg_host['addr'],
+                                    agg_host['port'],
+                                    agg_host['auth']['name'],
+                                    { 'conf' : conf })
                 comms[grp_name][agg_host['name']] = comm
                 comm.connect()
         for smplr_spec in self.samplers:
@@ -149,24 +149,32 @@ class MaestroMonitor(object):
             names = expand_names(smplr_spec)
             comms[grp_name] = {}
             for smplr_host in sampler_hosts(names, self.endpoints):
+                if 'conf' in smplr_host['auth']:
+                    conf = smplr_host['auth']['conf']
+                else:
+                    conf = None
                 comm = Communicator(smplr_host['xprt'],
                                     smplr_host['addr'],
                                     smplr_host['port'],
-                                    smplr_host['auth']['name'])
+                                    smplr_host['auth']['name'],
+                                    { 'conf' : conf })
                 comms[grp_name][smplr_host['name']] = comm
                 comm.connect()
         return comms
 
     def check_samplers(self):
-        cfg_smplrs = {}            
-        for smplr_spec in self.samplers:
-            grp_name = self.samplers[smplr_spec]['group']
+        cfg_smplrs = {}
+        for dgroup in self.samplers:
+            grp_name = self.samplers[dgroup]['group']
             for sampler in self.comms[grp_name]:
                 rc, msg = self.comms[grp_name][sampler].smplr_status()
                 if rc:
-                    print(f'error with sampler {sampler}')
-                if len(msg) == 0:
+                    raise ConnectionError(f'Error code: {rc} getting {sampler} status\n')
+                if msg is not None and len(msg) < len(self.samplers[dgroup]['config']):
                     cfg_smplrs[sampler] = self.endpoints[sampler]
+                elif len(msg) == len(self.samplers[dgroup]['config']):
+                    for plugin in self.samplers[dgroup]['config']:
+                        print(f'Sampler {plugin["name"]} has already been started')
         return cfg_smplrs
 
     def load_config(self):
@@ -285,7 +293,7 @@ class MaestroMonitor(object):
 
         cfg_sampler_eps = self.check_samplers()
         if cfg_sampler_eps:
-            start_samplers(self.samplers, cfg_sampler_eps)
+            start_samplers(self.comms, self.samplers, cfg_sampler_eps)
         # Add all the producers to the aggregators. Any error here is not an issue
         # because all aggs have all producers, although, not all producers are started.
         add_producers(self.comms, self.producers, self.aggregators, agg_state, self.endpoints)
@@ -343,22 +351,15 @@ class MaestroMonitor(object):
                 print('Finished load balancing.')
             time.sleep(1)
 
-def start_samplers(samplers, hosts):
+def start_samplers(comms, samplers, hosts):
     """Configure and load plugins for sampler daemons"""
-    comms = {}
     for smplr_spec in samplers.keys():
         names = expand_names(smplr_spec)
         i = 0
-        comms[smplr_spec] = {}
         for smplr_host in sampler_hosts(names, hosts):
             smplr_name = smplr_host['name']
             # Establish communicator to each ldmsd sampler
-            comm = Communicator(smplr_host['xprt'],
-                                smplr_host['addr'],
-                                smplr_host['port'],
-                                smplr_host['auth']['name'])
-            comms[smplr_spec][smplr_host['name']] = comm
-            comm.connect()
+            comm = comms[samplers[smplr_spec]['group']][smplr_host['name']]
             err, res = comm.daemon_status()
             if err:
                 print(f"Lost connectivity to {smplr_host['name']} err {err}")
@@ -475,7 +476,6 @@ def add_producers(comms, producers, aggregators, agg_state, endpoints):
     for grp_name in producers:
         grp_prods = set([ prod['name'] for prod in producers[grp_name]])
         prod_dict = { prod['name'] : prod for prod in producers[grp_name] }
-
         # Query the producer list on each aggregator in the group
         for agg_host in agg_hosts(grp_name, aggregators, endpoints):
             agg_name = agg_host['name']
@@ -490,6 +490,14 @@ def add_producers(comms, producers, aggregators, agg_state, endpoints):
                 agg_config = set({ prod['name'] for prod in res })
             add_prods = grp_prods - agg_config
             print(f"Adding {len(add_prods)} producers to agg {agg_name}")
+            ep = next(iter(add_prods))
+            auth = endpoints[ep]['auth']['name']
+            auth_opt = endpoints[ep]['auth']['conf']
+            if auth is not None:
+                rc, msg = comm.auth_add(auth, auth_opt)
+                if rc:
+                    print(f'Error adding authentication domain {auth} to aggregator {agg_name}\n')
+                    print(f'Error code {rc}: {msg}\n')
             for prod_name in add_prods:
                 prod = prod_dict[prod_name]
                 ep_name = prod['endpoint']
@@ -497,7 +505,7 @@ def add_producers(comms, producers, aggregators, agg_state, endpoints):
                 comm.prdcr_add(
                             prod_name, prod['type'],
                             endpoint['xprt'], endpoint['addr'], endpoint['port'],
-                            prod['reconnect'])
+                            prod['reconnect'], auth=auth)
                 if 'subscribe' in prod:
                     for sub in prod['subscribe']:
                         if 'regex' in sub:

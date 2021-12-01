@@ -214,6 +214,31 @@ class Communicator(object):
             raise ConnectionError(str(e))
         return rsp
 
+    def auth_add(self, name, auth_opt=None):
+        """
+        Add an authentication domain
+        Parameters:
+        name - The authentication domain name
+        <plugin-specific attribute> e.g. conf=ldmsauth.conf
+        """
+        attrs=[ LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name) ]
+        if auth_opt:
+            if len(auth_opt.split('=')) > 1:
+                attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.STRING, value=auth_opt))
+            else:
+                auth_opt = 'conf='+auth_opt
+                attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.STRING, value=auth_opt))
+        req = LDMSD_Request(
+                command_id=LDMSD_Request.AUTH_ADD,
+                attrs=attrs
+                )
+        try:
+            req.send(self)
+            resp = req.receive(self)
+            return resp['errcode'], resp['msg']
+        except Exception:
+            return errno.ENOTCONN, None
+
     def plugn_load(self, name):
         """
         Load an LDMSD plugin.
@@ -408,7 +433,7 @@ class Communicator(object):
             status = None
         return err, status
 
-    def prdcr_add(self, name, ptype, xprt, host, port, reconnect, perm=None):
+    def prdcr_add(self, name, ptype, xprt, host, port, reconnect, auth=None, perm=None):
         """
         Add a producer. A producer is a peer to the LDMSD being configured.
         Once started, the LDSMD will attempt to connect to this peer
@@ -442,6 +467,8 @@ class Communicator(object):
             LDMSD_Req_Attr(attr_id = LDMSD_Req_Attr.PORT, value=str(port)),
             LDMSD_Req_Attr(attr_id = LDMSD_Req_Attr.INTERVAL, value=str(reconnect))
         ]
+        if auth:
+            attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.AUTH, value=auth))
         if perm:
             attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PERM, value=str(perm)))
 
