@@ -5,9 +5,7 @@ endpoints:
     ports : &sampler-ports "[10002]"
     xprt : sock
     auth :
-      name   : munge
-      config :
-        domain : samplers
+      name   : munge 
 
   - names : &l1-agg-endpoints "agg[1-3]"
     group : &l1-agg "l1-agg"
@@ -16,8 +14,6 @@ endpoints:
     xprt : sock
     auth :
       name   : munge
-      config :
-        domain : aggregators
 
   - names : &l2-agg-endpoints "agg-4"
     group : &l2-agg "l2-agg"
@@ -26,8 +22,6 @@ endpoints:
     xprt : sock
     auth :
       name   : munge
-      config :
-        domain : users
 
 groups:
   - endpoints : *sampler-endpoints
