@@ -239,6 +239,8 @@ class Cluster(object):
             }
             if 'offset' in updtr_spec:
                 updtr['offset'] = cvt_intrvl_str_to_us(updtr_spec['offset'])
+            else:
+                updtr['offset'] = None
             if 'auto' in updtr_spec and 'push' in updtr_spec:
                 raise ValueError(f"The updater specification: {json.dumps(updtr_spec)} "
                                 "contains both 'push' and 'auto' which are "
