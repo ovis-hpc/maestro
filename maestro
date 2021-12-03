@@ -48,7 +48,7 @@ class MaestroMonitor(object):
         if 'samplers' in self.config[self.prefix]:
             self.samplers = self.config[self.prefix]['samplers']
         else:
-            self.samplers = None
+            self.samplers = {}
         self.producers = self.config[self.prefix]['producers']
         self.aggregators = self.config[self.prefix]['aggregators']
         self.updaters = self.config[self.prefix]['updaters']
@@ -103,7 +103,7 @@ class MaestroMonitor(object):
             for sampler in self.comms[grp_name]:
                 rc, msg = self.comms[grp_name][sampler].smplr_status()
                 if rc:
-                    raise ConnectionError(f'Error code: {rc} getting {sampler} status\n')
+                    raise ConnectionError(f'Error {rc}: {msg} getting {sampler} status\n')
                 if msg is not None and len(msg) < len(self.samplers[dgroup]['config']):
                     cfg_smplrs[sampler] = self.endpoints[sampler]
                 elif len(msg) == len(self.samplers[dgroup]['config']):
@@ -466,12 +466,19 @@ def add_updaters(comms, updaters, aggregators, agg_state, hosts):
                     continue
                 comm = comms[grp_name][agg_host['name']]
                 # the updater may already exist, in which case the add will fail
-                if 'push' in updtr:
-                    comm.updtr_add(updtr_name, push=updtr['push'])
-                elif 'auto' in updtr:
-                    comm.updtr_add(updtr_name, auto=updtr['auto'])
+                if 'offset' in updtr:
+                    offset = updtr['offset']
                 else:
-                    comm.updtr_add(updtr_name, interval=updtr['interval'])
+                    offset = None
+                if 'push' in updtr:
+                    rc, msg = comm.updtr_add(updtr_name, interval=updtr['interval'], offset=offset, push=updtr['push'])
+                elif 'auto' in updtr and updtr['auto'] == "True":
+                    rc, msg = comm.updtr_add(updtr_name, interval=updtr['interval'], offset=offset, auto=updtr['auto'])
+                else:
+                    rc, msg = comm.updtr_add(updtr_name, interval=updtr['interval'], offset=offset)
+
+                if rc:
+                    print(f'Error {rc}: {msg} adding updater {updtr_name} to {agg_host["name"]}')
 
                 for regex in updtr['producers']:
                     comm.updtr_prdcr_add(updtr_name, regex['regex'])

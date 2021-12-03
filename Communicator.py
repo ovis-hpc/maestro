@@ -666,16 +666,12 @@ class Communicator(object):
             LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name)
         ]
         if interval:
-            if push or auto:
-                return errno.EINVAL, "EINVAL"
             offset = check_offset(interval, offset)
             attrs += [
                 LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(interval)),
                 LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset))
             ]
         elif push:
-            if auto:
-                return errno.EINVAL, "EINVAL"
             if push != 'onchange' and push != True:
                 return errno.EINVAL, "EINVAL"
             attrs += [
