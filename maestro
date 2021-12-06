@@ -104,6 +104,7 @@ class MaestroMonitor(object):
                 rc, msg = self.comms[grp_name][sampler].smplr_status()
                 if rc:
                     raise ConnectionError(f'Error {rc}: {msg} getting {sampler} status\n')
+
                 if msg is not None and len(msg) < len(self.samplers[dgroup]['config']):
                     cfg_smplrs[sampler] = self.endpoints[sampler]
                 elif len(msg) == len(self.samplers[dgroup]['config']):
@@ -424,6 +425,7 @@ def add_producers(comms, producers, aggregators, agg_state, endpoints):
                 agg_config = set({ prod['name'] for prod in res })
             add_prods = grp_prods - agg_config
             print(f"Adding {len(add_prods)} producers to agg {agg_name}")
+
             if len(add_prods) > 0:
                 ep = next(iter(add_prods))
                 auth = endpoints[ep]['auth']['name']
@@ -431,6 +433,7 @@ def add_producers(comms, producers, aggregators, agg_state, endpoints):
             else:
                 auth = None
                 auth_opt = None
+
             if auth is not None:
                 rc, msg = comm.auth_add(auth, auth_opt)
                 if rc:
