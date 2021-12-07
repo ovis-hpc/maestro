@@ -424,13 +424,12 @@ def add_producers(comms, producers, aggregators, agg_state, endpoints):
                 agg_config = set({ prod['name'] for prod in res })
             add_prods = grp_prods - agg_config
             print(f"Adding {len(add_prods)} producers to agg {agg_name}")
+            auth = None
             if len(add_prods) > 0:
                 ep = next(iter(add_prods))
                 auth = endpoints[ep]['auth']['name']
                 auth_opt = endpoints[ep]['auth']['conf']
-            else:
-                auth = None
-                auth_opt = None
+
             if auth is not None:
                 rc, msg = comm.auth_add(auth, auth_opt)
                 if rc:
