@@ -3,86 +3,20 @@ import os, sys
 import subprocess
 import errno
 import yaml
-import hostlist
-import collections
 import copy
 import argparse
 import etcd3
 import json
 import threading, queue
 import time
-from collections import Mapping, Set, Sequence
 from Communicator import Communicator
+from maestro_util import cvt_intrvl_str_to_us, expand_names
 
 def agg_hosts(grp_name, aggs, hosts):
     return [ hosts[a['endpoint']] for a in aggs[grp_name] ]
 
 def sampler_hosts(ldmsds, hosts):
     return [ hosts[a] for a in ldmsds ]
-def cvt_intrvl_str_to_us(interval_s):
-    """Converts a time interval string to microseconds
-
-    A time-interval string is an integer or float follows by a
-    unit-string. A unit-string is any of the following:
-
-    's'  - seconds
-    'us' - microseconds
-    'm'  - minutes
-
-    Unit strings are not case-sensitive.
-
-    Examples:
-    '1.5s' - 1.5 seconds
-    '1.5S' - 1.5 seconds
-    '2s'   - 2 seconds
-    """
-    error_str = f"{interval_s} is not a valid time-interval string\n"\
-                f"'Only a single unit-string is allowed. e.g. '50s40us' is not a valid entry."\
-                f"Examples of acceptable format:\n"\
-                f"'1.5s' - 1.5 seconds\n"\
-                f"'1.5S' - 1.5 seconds\n"\
-                f"'2us'  - 2 microseconds\n"\
-                f"'3m'   - 3 minutes\n"\
-                f"\n"
-    if type(interval_s) is int:
-        return interval_s
-    elif type(interval_s) != str:
-        raise ValueError(f"{error_str}")
-    interval_s = interval_s.lower()
-    if 'us' in interval_s:
-        factor = 1
-        if interval_s.split('us')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('us')[0]
-    if 'ms' in interval_s:
-        factor = 1000
-        if interval_s.split('ms')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('ms')[0]
-    elif 's' in interval_s:
-        factor = 1000000
-        if interval_s.split('s')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('s')[0]
-    elif 'm' in interval_s:
-        factor = 60000000
-        if interval_s.split('m')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('m')[0]
-    try:
-        mult = float(ival_s)
-    except:
-        raise ValueError(f"{interval_s} is not a valid time-interval string")
-    return int(mult * factor)
-
-def expand_names(name_spec):
-    if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
-        names = []
-        for name in name_spec:
-            names += hostlist.expand_hostlist(name)
-    else:
-        names = hostlist.expand_hostlist(name_spec)
-    return names
 
 class MaestroMonitor(object):
     def __init__(self, prefix, config, args):
@@ -114,7 +48,7 @@ class MaestroMonitor(object):
         if 'samplers' in self.config[self.prefix]:
             self.samplers = self.config[self.prefix]['samplers']
         else:
-            self.samplers = None
+            self.samplers = {}
         self.producers = self.config[self.prefix]['producers']
         self.aggregators = self.config[self.prefix]['aggregators']
         self.updaters = self.config[self.prefix]['updaters']
@@ -169,7 +103,7 @@ class MaestroMonitor(object):
             for sampler in self.comms[grp_name]:
                 rc, msg = self.comms[grp_name][sampler].smplr_status()
                 if rc:
-                    raise ConnectionError(f'Error code: {rc} getting {sampler} status\n')
+                    raise ConnectionError(f'Error {rc}: {msg} getting {sampler} status\n')
                 if msg is not None and len(msg) < len(self.samplers[dgroup]['config']):
                     cfg_smplrs[sampler] = self.endpoints[sampler]
                 elif len(msg) == len(self.samplers[dgroup]['config']):
@@ -490,9 +424,12 @@ def add_producers(comms, producers, aggregators, agg_state, endpoints):
                 agg_config = set({ prod['name'] for prod in res })
             add_prods = grp_prods - agg_config
             print(f"Adding {len(add_prods)} producers to agg {agg_name}")
-            ep = next(iter(add_prods))
-            auth = endpoints[ep]['auth']['name']
-            auth_opt = endpoints[ep]['auth']['conf']
+            auth = None
+            if len(add_prods) > 0:
+                ep = next(iter(add_prods))
+                auth = endpoints[ep]['auth']['name']
+                auth_opt = endpoints[ep]['auth']['conf']
+
             if auth is not None:
                 rc, msg = comm.auth_add(auth, auth_opt)
                 if rc:
@@ -528,12 +465,19 @@ def add_updaters(comms, updaters, aggregators, agg_state, hosts):
                     continue
                 comm = comms[grp_name][agg_host['name']]
                 # the updater may already exist, in which case the add will fail
-                if 'push' in updtr:
-                    comm.updtr_add(updtr_name, push=updtr['push'])
-                elif 'auto' in updtr:
-                    comm.updtr_add(updtr_name, auto=updtr['auto'])
+                if 'offset' in updtr:
+                    offset = updtr['offset']
                 else:
-                    comm.updtr_add(updtr_name, interval=updtr['interval'])
+                    offset = None
+                if 'push' in updtr:
+                    rc, msg = comm.updtr_add(updtr_name, interval=updtr['interval'], offset=offset, push=updtr['push'])
+                elif 'auto' in updtr and updtr['auto'] == "True":
+                    rc, msg = comm.updtr_add(updtr_name, interval=updtr['interval'], offset=offset, auto=updtr['auto'])
+                else:
+                    rc, msg = comm.updtr_add(updtr_name, interval=updtr['interval'], offset=offset)
+
+                if rc:
+                    print(f'Error {rc}: {msg} adding updater {updtr_name} to {agg_host["name"]}')
 
                 for regex in updtr['producers']:
                     comm.updtr_prdcr_add(updtr_name, regex['regex'])
@@ -568,12 +512,16 @@ def add_stores(comms, stores, aggregators, agg_state, hosts):
                 plugin_config = plugin['config']
                 err, res = comm.plugn_load(plugin_name)
                 err, res = comm.plugn_config(plugin_name, **plugin_config)
-
+                if 'flush' in store:
+                    flush = store['flush']
+                else:
+                    flush = None
                 ## the stores may already exist, in which case the add will fail
                 err, res = comm.strgp_add(store_name,
                                           plugin_name,
                                           store['container'],
-                                          store['schema'])
+                                          store['schema'],
+                                          flush=flush)
                 ## Add producers
                 err, res = comm.strgp_prdcr_add(store_name, ".*")
 

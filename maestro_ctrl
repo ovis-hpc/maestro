@@ -2,13 +2,12 @@
 import os, sys
 import errno
 import yaml
-import hostlist
-import collections
 import argparse
 import etcd3
 import json
 import time
 from collections import Mapping, Sequence
+from maestro_util import cvt_intrvl_str_to_us, expand_names
 
 class Cluster(object):
     def emit_value(self, path, value):
@@ -240,6 +239,8 @@ class Cluster(object):
             }
             if 'offset' in updtr_spec:
                 updtr['offset'] = cvt_intrvl_str_to_us(updtr_spec['offset'])
+            else:
+                updtr['offset'] = None
             if 'auto' in updtr_spec and 'push' in updtr_spec:
                 raise ValueError(f"The updater specification: {json.dumps(updtr_spec)} "
                                 "contains both 'push' and 'auto' which are "
@@ -364,6 +365,138 @@ class Cluster(object):
                 cfg_str += key + '=' + str(cfg_obj[key])
         return cfg_str
 
+    def write_producers(self, fd, group_name):
+        #Writes producer configuration to file fd
+        if group_name in self.producers:
+            ''' Balance samplers across aggregators '''
+            prdcrs = []
+            loop = round(len(self.producers[group_name]) / len(self.aggregators[group_name]))
+            last_sampler = None
+            for prdcr in self.producers[group_name]:
+                prdcrs.append(prdcr["name"])
+            if not last_sampler:
+                idx = 0
+            else:
+                idx = prdcrs.index(last_sampler) + 1
+            prod_group = self.producers[group_name][idx:]
+            i = 0
+            auth = self.endpoints[prod_group[0]['endpoint']]['auth']['name']
+            auth_opt = self.endpoints[prod_group[0]['endpoint']]['auth']['conf']
+            if auth:
+                if len(auth_opt.split('=')) == 1:
+                    auth_opt = 'conf='+auth_opt
+                fd.write(f'auth_add name={auth} {auth_opt}\n')
+            for producer in prod_group:
+                if i >= loop:
+                    break
+                regex = False
+                pname = producer['name']
+                port = self.endpoints[producer['endpoint']]['port']
+                xprt = self.endpoints[producer['endpoint']]['xprt']
+                hostname = self.endpoints[producer['endpoint']]['addr']
+                ptype = producer['type']
+                interval = producer['reconnect']
+                fd.write(f'prdcr_add name={pname} '+
+                         f'host={hostname} '+
+                         f'port={port} '+
+                         f'xprt={xprt} type={ptype} interval={interval}\n')
+                last_sampler = pname
+                i += 1
+                if 'regex' in producer:
+                    regex = True
+                    fd.write(f'prdcr_start_regex regex={producer["regex"]}\n')
+                if not regex:
+                    fd.write(f'prdcr_start_regex regex=.*\n')
+
+    def write_samplers(self, fd, smplr_group):
+        for sampler in self.samplers[smplr_group]['config']:
+            cfg_str = self.parse_to_cfg_str(sampler)
+            sname = sampler['name']
+            interval = cvt_intrvl_str_to_us(sampler['interval'])
+            fd.write(f'load name={sname}\n')
+            fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
+                     f'component_id=${{COMPONENT_ID}} '+
+                     f'instance=${{HOSTNAME}}/{sname}\n')
+            if 'offset' in sampler:
+                offset = cvt_intrvl_str_to_us(sampler['offset'])
+                fd.write(f'start name={sname} interval={interval} offset={offset}\n')
+            else:
+                fd.write(f'start name={sname} interval={interval}\n')
+
+    def write_sampler_plugins(self, group_name):
+        if self.plugins != None:
+            if group_name in self.plugins:
+                fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
+                for plugin in self.plugins[group_name]:
+                    cfg_str = self.parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
+                    fd.write(f'load name={plugin}\n')
+                    fd.write(f'config name={plugin} {cfg_str}\n\n')
+                fd.close()
+
+    def write_agg_plugins(self, fd, group_name):
+        # Write independent plugin configuration for group <group_name>
+        if self.plugins != None:
+            if group_name in self.plugins:
+                for plugin in self.plugins[group_name]:
+                    cfg_str = self.parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
+                    if 'stream' in self.plugins[group_name][plugin]['config']:
+                        if 'regex' in self.plugins[group_name][plugin]['config']:
+                            regex = self.plugins[group_name][plugin]['config']
+                            fd.write(f'prdcr_subscribe stream={self.plugins[group_name][plugin]["config"]["stream"]} '\
+                                     f'regex={regex}\n')
+                        else:
+                            fd.write(f'prdcr_subscribe stream={self.plugins[group_name][plugin]["config"]["stream"]} '\
+                                     f'regex=.*\n')
+                    fd.write(f'load name={plugin}\n')
+                    fd.write(f'config name={plugin} {cfg_str}\n\n')
+
+    def write_updaters(self, fd, group_name):
+        if group_name in self.updaters:
+            updtr_group = self.updaters[group_name]
+            for updtr in updtr_group:
+                interval = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'])
+                updtr_str = f'updtr_add name={updtr_group[updtr]["name"]} '
+                if 'mode' in updtr_group[updtr]:
+                    mode = updtr_group[updtr]['mode']
+                else:
+                    mode = 'static'
+                # Check mode
+                if mode == 'push':
+                    updtr_str += 'push=onchange\n'
+                elif mode == 'auto_interval':
+                    updtr_str += 'auto_interval=True\n'
+                elif 'offset' in updtr_group[updtr]:
+                    offset = cvt_intrvl_str_to_us(updtr_group[updtr]['offset'])
+                    fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
+                             f'interval={interval} offset={offset}\n')
+                else:
+                    fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
+                             f'interval={interval}\n')
+                for prod in updtr_group[updtr]['producers']:
+                    fd.write(f'updtr_prdcr_add name={updtr_group[updtr]["name"]} '+
+                             f'regex={prod["regex"]}\n')
+                fd.write(f'updtr_start name={updtr_group[updtr]["name"]}\n')
+
+    def write_stores(self, fd, group_name):
+        if group_name in self.stores:
+            store_group = self.stores[group_name]
+            loaded_plugins = []
+            for store in store_group:
+                if store_group[store]["plugin"]["name"] not in loaded_plugins:
+                    fd.write(f'load name={store_group[store]["plugin"]["name"]}\n')
+                    fd.write(f'config name={store_group[store]["plugin"]["name"]} '+
+                             f'{self.parse_to_cfg_str(store_group[store]["plugin"]["config"])}\n')
+                    loaded_plugins.append(store_group[store]["plugin"]["name"])
+                strgp_add = f'strgp_add name={store} plugin={store_group[store]["plugin"]["name"]} '
+                strgp_add += f'container={store_group[store]["container"]} '
+                strgp_add += f'schema={store_group[store]["schema"]} '
+                if 'flush' in store_group[store]:
+                    strgp_add += f'flush={store_group[store]["flush"]}\n'
+                else:
+                    strgp_add += '\n'
+                fd.write(strgp_add)
+                fd.write(f'strgp_start name={store}\n')
+
     def config_v4(self, path):
         """
         Read the group configuration from ETCD and generate a version 4 LDMSD configuration
@@ -377,40 +510,19 @@ class Cluster(object):
             # Sampler config
             if self.samplers != None:
                 try:
-                    fd = None
-                    if self.plugins != None:
-                        if group_name in self.plugins:
-                            fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
-                            for plugin in self.plugins[group_name]:
-                                cfg_str = self.parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
-                                fd.write(f'load name={plugin}\n')
-                                fd.write(f'config name={plugin} {cfg_str}\n\n')
-
+                    self.write_sampler_plugins(self)
                     for smplr_group in self.samplers:
                         # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
                         if group_name != self.samplers[smplr_group]['group']:
                             continue
-                        if fd is None:
-                            fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
-                        for sampler in self.samplers[smplr_group]['config']:
-                            cfg_str = self.parse_to_cfg_str(sampler)
-                            sname = sampler['name']
-                            interval = cvt_intrvl_str_to_us(sampler['interval'])
-                            fd.write(f'load name={sname}\n')
-                            fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
-                                     f'component_id=${{COMPONENT_ID}} '+
-                                     f'instance=${{HOSTNAME}}/{sname}\n')
-                            if 'offset' in sampler:
-                                offset = cvt_intrvl_str_to_us(sampler['offset'])
-                                fd.write(f'start name={sname} interval={interval} offset={offset}\n')
-                            else:
-                                fd.write(f'start name={sname} interval={interval}\n')
+                        fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
+                        self.write_samplers(fd, smplr_group)
                     if fd:
                         fd.close()
                 except Exception as e:
                     a, b, d = sys.exc_info()
                     print(f'Error generating sampler configuration: {str(e)} {str(d.tb_lineno)}')
-                    return errno.EINVAL
+                    raise ValueError
             else:
                 print(f'"samplers" not found in configuration file. Skipping...')
 
@@ -422,163 +534,14 @@ class Cluster(object):
                 last_sampler = None
                 for agg in self.aggregators[group_name]:
                     fd = open(f'{path}/{group_name}-{agg["name"]}.conf', 'w+')
-                    if group_name in self.producers:
-                        ''' Balance samplers across aggregators '''
-                        prdcrs = []
-                        loop = round(len(self.producers[group_name]) / len(self.aggregators[group_name]))
-                        for prdcr in self.producers[group_name]:
-                            prdcrs.append(prdcr["name"])
-                        if not last_sampler:
-                            idx = 0
-                        else:
-                            idx = prdcrs.index(last_sampler) + 1
-                        prod_group = self.producers[group_name][idx:]
-                        i = 0
-                        auth = self.endpoints[prod_group[0]['endpoint']]['auth']['name']
-                        auth_opt = self.endpoints[prod_group[0]['endpoint']]['auth']['conf']
-                        if auth:
-                            if len(auth_opt.split('=')) == 1:
-                                auth_opt = 'conf='+auth_opt
-                            fd.write(f'auth_add name={auth} {auth_opt}\n')
-                        for producer in prod_group:
-                            if i >= loop:
-                                break
-                            regex = False
-                            pname = producer['name']
-                            port = self.endpoints[producer['endpoint']]['port']
-                            xprt = self.endpoints[producer['endpoint']]['xprt']
-                            hostname = self.endpoints[producer['endpoint']]['addr']
-                            ptype = producer['type']
-                            interval = producer['reconnect']
-                            fd.write(f'prdcr_add name={pname} '+
-                                     f'host={hostname} '+
-                                     f'port={port} '+
-                                     f'xprt={xprt} type={ptype} interval={interval}')
-                            if auth:
-                                fd.write(f' auth={auth}\n')
-                            else:
-                                fd.write(f'\n')
-                            last_sampler = pname
-                            i += 1
-                            if 'regex' in producer:
-                                regex = True
-                                fd.write(f'prdcr_start_regex regex={producer["regex"]}\n')
-                        if not regex:
-                            fd.write('prdcr_start_regex regex=.*\n')
-                    # Plugin Config
-                    if self.plugins != None:
-                        if group_name in self.plugins:
-                            for plugin in self.plugins[group_name]:
-                                cfg_str = self.parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
-                                if 'stream' in self.plugins[group_name][plugin]['config']:
-                                    # Will need to be updated for custom producer regex
-                                    if 'regex' in self.plugins[group_name][plugin]['config']:
-                                        regex = self.plugins[group_name][plugin]['config']
-                                        fd.write(f'prdcr_subscribe stream={self.plugins[group_name][plugin]["config"]["stream"]} '\
-                                                 f'regex={regex}\n')
-                                    else:
-                                        fd.write(f'prdcr_subscribe stream={self.plugins[group_name][plugin]["config"]["stream"]} '\
-                                                 f'regex=.*\n')
-                                fd.write(f'load name={plugin}\n')
-                                fd.write(f'config name={plugin} {cfg_str}\n\n')
-
-                    if group_name in self.updaters:
-                        updtr_group = self.updaters[group_name]
-                        for updtr in updtr_group:
-                            interval = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'])
-                            if 'offset' in updtr_group[updtr]:
-                                offset = cvt_intrvl_str_to_us(updtr_group[updtr]['offset'])
-                                fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
-                                         f'interval={interval} offset={offset} auto_interval=true\n')
-                            else:
-                                fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
-                                         f'interval={interval} auto_interval=true\n')
-                            for prod in updtr_group[updtr]['producers']:
-                                fd.write(f'updtr_prdcr_add name={updtr_group[updtr]["name"]} '+
-                                         f'regex={prod["regex"]}\n')
-                            fd.write(f'updtr_start name={updtr_group[updtr]["name"]}\n')
-                    if group_name in self.stores:
-                        store_group = self.stores[group_name]
-                        loaded_plugins = []
-                        for store in store_group:
-                            if store_group[store]["plugin"]["name"] not in loaded_plugins:
-                                fd.write(f'load name={store_group[store]["plugin"]["name"]}\n')
-                                fd.write(f'config name={store_group[store]["plugin"]["name"]} '+
-                                         f'{self.parse_to_cfg_str(store_group[store]["plugin"]["config"])}\n')
-                                loaded_plugins.append(store_group[store]["plugin"]["name"])
-                            fd.write(f'strgp_add name={store} plugin={store_group[store]["plugin"]["name"]} '+
-                                     f'container={store_group[store]["container"]} '+
-                                     f'schema={store_group[store]["schema"]} '+
-                                     f'flush={store_group[store]["flush"]}\n')
-                            fd.write(f'strgp_start name={store}\n')
+                    self.write_producers(fd, group_name)
+                    self.write_agg_plugins(fd, group_name)
+                    self.write_updaters(fd, group_name)
+                    self.write_stores(fd, group_name)
             except Exception as e:
                 ea, eb, ec = sys.exc_info()
                 print('Agg config Error: '+str(e)+' Line:'+str(ec.tb_lineno))
-
-def expand_names(name_spec):
-    if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
-        names = []
-        for name in name_spec:
-            names += hostlist.expand_hostlist(name)
-    else:
-        names = hostlist.expand_hostlist(name_spec)
-    return names
-
-def cvt_intrvl_str_to_us(interval_s):
-    """Converts a time interval string to microseconds
-
-    A time-interval string is an integer or float follows by a
-    unit-string. A unit-string is any of the following:
-
-    's'  - seconds
-    'us' - microseconds
-    'm'  - minutes
-
-    Unit strings are not case-sensitive.
-
-    Examples:
-    '1.5s' - 1.5 seconds
-    '1.5S' - 1.5 seconds
-    '2s'   - 2 seconds
-    """
-    error_str = f"{interval_s} is not a valid time-interval string\n"\
-                f"'Only a single unit-string is allowed. e.g. '50s40us' is not a valid entry."\
-                f"Examples of acceptable format:\n"\
-                f"'1.5s' - 1.5 seconds\n"\
-                f"'1.5S' - 1.5 seconds\n"\
-                f"'2us'  - 2 microseconds\n"\
-                f"'3m'   - 3 minutes\n"\
-                f"\n"
-    if type(interval_s) == int:
-        return interval_s
-    elif type(interval_s) != str:
-        raise ValueError(f"{error_str}")
-    interval_s = interval_s.lower()
-    if 'us' in interval_s:
-        factor = 1
-        if interval_s.split('us')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('us')[0]
-    if 'ms' in interval_s:
-        factor = 1000
-        if interval_s.split('ms')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('ms')[0]
-    elif 's' in interval_s:
-        factor = 1000000
-        if interval_s.split('s')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('s')[0]
-    elif 'm' in interval_s:
-        factor = 60000000
-        if interval_s.split('m')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('m')[0]
-    try:
-        mult = float(ival_s)
-    except:
-        raise ValueError(f"{interval_s} is not a valid time-interval string")
-    return int(mult * factor)
+                raise ValueError
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

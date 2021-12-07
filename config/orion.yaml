@@ -90,7 +90,7 @@ samplers:
         perm        : "0777"
 
 updaters:            
-- name     : all           # must be unique within group
+- name     : l1-all           # must be unique within group
   group    : *l1-agg
   interval : "1.0s"
   offset   : "0ms"
@@ -101,7 +101,7 @@ updaters:
     - regex : .*        # regular expression matching producer name
                         # this is evaluated on the Aggregator, not
                         # at configuration time'
-- name     : all           # must be unique within group
+- name     : l2-all           # must be unique within group
   group    : *l2-agg
   interval : "1.0s"
   offset   : "0ms"
