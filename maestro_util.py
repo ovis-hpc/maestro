@@ -36,7 +36,7 @@ def cvt_intrvl_str_to_us(interval_s):
         if interval_s.split('us')[1] != '':
             raise ValueError(f"{error_str}")
         ival_s = interval_s.split('us')[0]
-    if 'ms' in interval_s:
+    elif 'ms' in interval_s:
         factor = 1000
         if interval_s.split('ms')[1] != '':
             raise ValueError(f"{error_str}")
