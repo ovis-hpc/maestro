@@ -1,6 +1,11 @@
 import collections
 import hostlist
 
+OMIT_ATTRS = [
+    'interval',
+    'offset'
+]
+
 def cvt_intrvl_str_to_us(interval_s):
     """Converts a time interval string to microseconds
 
@@ -74,3 +79,17 @@ def expand_names(name_spec):
         names = hostlist.expand_hostlist(name_spec)
     return names
 
+def parse_to_cfg_str(cfg_obj):
+    cfg_str = ''
+    for key in cfg_obj:
+        if key not in OMIT_ATTRS:
+            if len(cfg_str) > 8:
+                cfg_str += ' '
+            cfg_str += key + '=' + str(cfg_obj[key])
+    return cfg_str
+
+def parse_yaml_bool(bool_):
+    if bool_ is True or bool_ == 'true' or bool_ == 'True':
+        return True
+    else:
+        return False

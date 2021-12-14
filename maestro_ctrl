@@ -7,7 +7,7 @@ import etcd3
 import json
 import time
 from collections import Mapping, Sequence
-from maestro_util import cvt_intrvl_str_to_us, expand_names
+from maestro_util import *
 
 class Cluster(object):
     def emit_value(self, path, value):
@@ -39,29 +39,38 @@ class Cluster(object):
                 raise ValueError("The '{0}' attribute is required in a {1}".
                                  format(name, container_name))
 
-    def build_endpoints(self, config):
-        """Generate an endpoint spec list from YAML config
+    def build_daemons(self, config):
+        """Generate a daemon spec list from YAML config
 
         Builds a dictionary of endpoint definitions. The 'config' is a
-        list of endpoint specifications. Each endpoint specification contains
-        'name', 'host', and 'port' attributes. All attributes are
+        list of daemon specifications. Each daemon specification contains
+        'names', 'host', and 'endpoint' attributes. All attributes are
         expanded per the slurm hostlist rules. The length of the
         expanded name-list, must equal the length of the expanded
-        host-list times the expanded port-list.
+        host-list.
 
         Example:
 
-        names : "nid[0001-0002]-[10001-10002]"
-        hosts : "nid[0001-0002]"
-        ports : "[10001-10002]"
+        daemons:
+          - names : "agg-[1-10]"
+            hosts : "node[1-10]"
+            endpoints :
+              - names : "node-[1-10]-[10002]
+                ports : "[10002]"
+                maestro_comm : True
+                xprt : sock
+                auth :
+                  name : munge
 
         results in the following host-spec dictionary:
 
         {
-        "nid0001-10001" : { "host" : "nid0001", "port" : 10001 },
-        "nid0001-10002" : { "host" : "nid0001", "port" : 10002 },
-        "nid0002-10001" : { "host" : "nid0002", "port" : 10001 },
-        "nid0002-10002" : { "host" : "nid0002", "port" : 10002 }
+        "agg-[[1-3]-10002]" : [
+          "node-1-10002" : { "host" : "node-1", "port" : 10002 },
+          "node-2-10002" : { "host" : "node-2", "port" : 10002 },
+          "node-3-10002" : { "host" : "node-3", "port" : 10002 },
+          ...
+        ]
         }
 
         """
@@ -71,15 +80,16 @@ class Cluster(object):
             self.check_required([ 'names', 'endpoints', 'hosts' ],
                                 spec, "daemons specification")
             hosts = expand_names(spec['hosts'])
+            ep_dict[spec['names']] = {}
             for ep in spec['endpoints']:
                 self.check_required([ 'names', 'ports' ],
                                       ep, 'endpoint specification')
-                if 'xprt' in spec:
-                    xprt = spec['xprt']
+                if 'xprt' in ep:
+                    xprt = ep['xprt']
                 else:
                     xprt = 'sock'
-                if 'auth' in spec:
-                    auth = spec['auth']
+                if 'auth' in ep:
+                    auth = ep['auth']
                     self.check_required([ 'name' ],
                                         auth, "authentication configuration")
                     auth_name = auth['name']
@@ -93,6 +103,8 @@ class Cluster(object):
                 names = expand_names(ep['names'])
                 ports = expand_names(ep['ports'])
                 # build compute for each host x port
+                if 'maestro_comm' in ep:
+                    maestro_comm = parse_yaml_bool(ep['maestro_comm'])
                 for host in hosts:
                     for port in ports:
                         name = names.pop(0)
@@ -101,9 +113,10 @@ class Cluster(object):
                             'addr' : host,
                             'port' : port,
                             'xprt' : xprt,
+                            'maestro_comm' : maestro_comm,
                             'auth' : { 'name' : auth_name, 'conf' : auth_config }
                         }
-                        ep_dict[name] = h
+                        ep_dict[spec['names']][name] = h
         return ep_dict
 
     def build_groups(self, config):
@@ -175,11 +188,13 @@ class Cluster(object):
                 self.check_required([ 'endpoints', 'updaters',
                                       'reconnect', 'type', ],
                                       prod, '"producer" entry')
+                # Use endpoints for producer names and remove names attribute?
+                daemons = prod['daemons']
                 names = expand_names(prod['endpoints'])
                 endpoints = expand_names(prod['endpoints'])
                 group = agg['daemons']
                 if group not in producers:
-                    producers[group] = []
+                    producers[group] = {}
 
                 if 'subscribe' in prod:
                     subscribe = prod['subscribe']
@@ -195,6 +210,7 @@ class Cluster(object):
                 for name in names:
                     endpoint = endpoints.pop(0)
                     prod = {
+                        'daemons'   : daemons,
                         'name'      : name,
                         'endpoint'  : endpoint,
                         'type'      : typ,
@@ -204,7 +220,7 @@ class Cluster(object):
                     }
                     if subscribe:
                         prod['subscribe'] = subscribe
-                    producers[group].append(prod)
+                    producers[group][endpoint] = prod
         return producers
 
     def build_updaters(self, config):
@@ -286,8 +302,10 @@ class Cluster(object):
             return None
         smplrs = {}
         for smplr_spec in config['samplers']:
-            self.check_required([ 'daemons', 'config' ],
+            self.check_required([ 'daemons', 'plugins' ],
                                   smplr_spec, '"sampler" entry')
+            for plugin in smplr_spec['plugins']:
+                self.check_required(['name'], plugin, 'plugin entry')
             smplrs[smplr_spec['daemons']] = smplr_spec
         return smplrs
 
@@ -303,7 +321,7 @@ class Cluster(object):
         for plugn_spec in config['plugins']:
             self.check_required([ 'name', 'config' ],
                                   plugn_spec, '"plugin" entry')
-            group = plugn_spec['group']
+            group = plugn_spec['daemons']
             if group not in plugins:
                 plugins[group] = {}
             grp_plugins = plugins[group]
@@ -320,7 +338,7 @@ class Cluster(object):
         self.client = client
         self.name = name
         self.cluster_config = cluster_config
-        self.endpoints = self.build_endpoints(cluster_config)
+        self.daemons = self.build_daemons(cluster_config)
         self.aggregators = self.build_aggregators(cluster_config)
         self.groups = self.build_groups(cluster_config)
         self.producers = self.build_producers(cluster_config)
@@ -335,7 +353,7 @@ class Cluster(object):
     def save_config(self):
         try:
             self.client.delete_prefix('/' + self.name)
-            self.walk(self.endpoints, '/' + self.name + '/endpoints')
+            self.walk(self.daemons, '/' + self.name + '/daemons')
             self.walk(self.aggregators, '/' + self.name + '/aggregators')
             self.walk(self.groups, '/' + self.name + '/groups')
             self.walk(self.producers, '/' + self.name + '/producers')
@@ -351,15 +369,6 @@ class Cluster(object):
             print(str(e)+' '+str(c.tb_lineno))
             return 1
 
-    def parse_to_cfg_str(self, cfg_obj):
-        cfg_str = ''
-        for key in cfg_obj:
-            if key != 'interval' and key != 'offset':
-                if len(cfg_str) > 8:
-                    cfg_str += ' '
-                cfg_str += key + '=' + str(cfg_obj[key])
-        return cfg_str
-
     def write_producers(self, fd, group_name):
         #Writes producer configuration to file fd
         if group_name in self.producers:
@@ -368,15 +377,19 @@ class Cluster(object):
             loop = round(len(self.producers[group_name]) / len(self.aggregators[group_name]))
             last_sampler = None
             for prdcr in self.producers[group_name]:
-                prdcrs.append(prdcr["name"])
+                prdcrs.append(prdcr)
             if not last_sampler:
                 idx = 0
             else:
                 idx = prdcrs.index(last_sampler) + 1
-            prod_group = self.producers[group_name][idx:]
+            prod_group = list(self.producers[group_name].keys())[idx:]
+            smplr_group = self.producers[group_name][prod_group[0]]['daemons']
             i = 0
-            auth = self.endpoints[prod_group[0]['endpoint']]['auth']['name']
-            auth_opt = self.endpoints[prod_group[0]['endpoint']]['auth']['conf']
+            try:
+                auth = self.daemons[smplr_group][prod_group[0]]['auth']['name']
+                auth_opt = self.daemons[smplr_group][prod_group[0]]['auth']['conf']
+            except:
+                auth = None
             if auth:
                 if len(auth_opt.split('=')) == 1:
                     auth_opt = 'conf='+auth_opt
@@ -385,10 +398,11 @@ class Cluster(object):
                 if i >= loop:
                     break
                 regex = False
+                producer = self.producers[group_name][producer]
                 pname = producer['name']
-                port = self.endpoints[producer['endpoint']]['port']
-                xprt = self.endpoints[producer['endpoint']]['xprt']
-                hostname = self.endpoints[producer['endpoint']]['addr']
+                port = self.daemons[producer['daemons']][producer['endpoint']]['port']
+                xprt = self.daemons[producer['daemons']][producer['endpoint']]['xprt']
+                hostname = self.daemons[producer['daemons']][producer['endpoint']]['addr']
                 ptype = producer['type']
                 interval = producer['reconnect']
                 fd.write(f'prdcr_add name={pname} '+
@@ -404,8 +418,8 @@ class Cluster(object):
                     fd.write(f'prdcr_start_regex regex=.*\n')
 
     def write_samplers(self, fd, smplr_group):
-        for sampler in self.samplers[smplr_group]['config']:
-            cfg_str = self.parse_to_cfg_str(sampler)
+        for sampler in self.samplers[smplr_group]['plugins']:
+            cfg_str = parse_to_cfg_str(sampler['config'])
             sname = sampler['name']
             interval = cvt_intrvl_str_to_us(sampler['interval'])
             fd.write(f'load name={sname}\n')
@@ -423,7 +437,7 @@ class Cluster(object):
             if group_name in self.plugins:
                 fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
                 for plugin in self.plugins[group_name]:
-                    cfg_str = self.parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
+                    cfg_str = parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
                     fd.write(f'load name={plugin}\n')
                     fd.write(f'config name={plugin} {cfg_str}\n\n')
                 fd.close()
@@ -433,7 +447,7 @@ class Cluster(object):
         if self.plugins != None:
             if group_name in self.plugins:
                 for plugin in self.plugins[group_name]:
-                    cfg_str = self.parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
+                    cfg_str = parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
                     if 'stream' in self.plugins[group_name][plugin]['config']:
                         if 'regex' in self.plugins[group_name][plugin]['config']:
                             regex = self.plugins[group_name][plugin]['config']
@@ -480,7 +494,7 @@ class Cluster(object):
                 if store_group[store]["plugin"]["name"] not in loaded_plugins:
                     fd.write(f'load name={store_group[store]["plugin"]["name"]}\n')
                     fd.write(f'config name={store_group[store]["plugin"]["name"]} '+
-                             f'{self.parse_to_cfg_str(store_group[store]["plugin"]["config"])}\n')
+                             f'{parse_to_cfg_str(store_group[store]["plugin"]["config"])}\n')
                     loaded_plugins.append(store_group[store]["plugin"]["name"])
                 strgp_add = f'strgp_add name={store} plugin={store_group[store]["plugin"]["name"]} '
                 strgp_add += f'container={store_group[store]["container"]} '
