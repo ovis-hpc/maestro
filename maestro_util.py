@@ -13,6 +13,7 @@ def cvt_intrvl_str_to_us(interval_s):
     unit-string. A unit-string is any of the following:
 
     's'  - seconds
+    'ms' - milliseconds
     'us' - microseconds
     'm'  - minutes
 
@@ -69,6 +70,24 @@ def check_offset(interval_us, offset_us=None):
     else:
         offset_us = 0
     return offset_us
+
+def check_opt(attr, spec):
+    # Check for optional argument and return None if not present
+    if attr in spec:
+        return spec[attr]
+    else:
+        return None
+
+def check_opt_int(attr, spec):
+    if attr in spec:
+        return cvt_intrvl_str_to_us(spec[attr])
+    else:
+        if attr == 'interval':
+            return 1000000
+        elif attr == 'offset':
+            return None
+        else:
+            return None
 
 def expand_names(name_spec):
     if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
