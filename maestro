@@ -9,7 +9,7 @@ import json
 import threading, queue
 import time
 from Communicator import Communicator
-from maestro_util import cvt_intrvl_str_to_us, expand_names
+from maestro_util import *
 
 def agg_hosts(grp_name, aggs, daemons):
     return [ daemons[grp_name][d['endpoint']] for d in aggs[grp_name] ]
@@ -63,10 +63,7 @@ class MaestroMonitor(object):
                                     '-l', 'log/'+agg_host['name']+'.log',
                                     '-m', '2g',
                                     '-r', 'log/'+agg_host['name']+'.pid'])
-                if 'conf' in agg_host['auth']:
-                    conf = agg_host['auth']['conf']
-                else:
-                    conf = None
+                conf = check_opt('conf', agg_host['auth'])
                 comm = Communicator(agg_host['xprt'],
                                     agg_host['addr'],
                                     agg_host['port'],
@@ -80,10 +77,7 @@ class MaestroMonitor(object):
                 ep = self.daemons[daemon_grp][ep_name]
                 if ep['maestro_comm'] is False:
                     continue
-                if 'conf' in ep['auth']:
-                    conf = ep['auth']['conf']
-                else:
-                    conf = None
+                conf = check_opt('conf', ep['auth'])
                 comm = Communicator(ep['xprt'],
                                     ep['addr'],
                                     ep['port'],
@@ -341,14 +335,8 @@ def start_samplers(comms, samplers, daemons):
             smplrs = comm.smplr_status()
             for plugin in samplers[smplr_group]['plugins']:
                 print(f'Starting.. {plugin["name"]} on {smplr_name}')
-                if 'interval' in plugin:
-                    interval = cvt_intrvl_str_to_us(plugin['interval'])
-                else:
-                    interval = 1000000
-                if 'offset' in plugin:
-                    offset = cvt_intrvl_str_to_us(plugin['offset'])
-                else:
-                    offset = None
+                interval = check_opt_int('interval', plugin)
+                offset = check_opt_int('offset', plugin)
                 rc, msg = comm.plugn_start(plugin['name'], interval, offset)
                 if rc:
                     print(f'Error {rc} starting {plugin["name"]} on {smplr_name} \n'\
@@ -418,10 +406,7 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                 ep = next(iter(add_prods))
                 dmn_grp = prod_dict[ep]['daemons']
                 auth = endpoints[dmn_grp][ep]['auth']['name']
-                if 'conf' in endpoints[dmn_grp][ep]['auth']:
-                    auth_opt = endpoints[dmn_grp][ep]['auth']['conf']
-                else:
-                    auth_opt = None
+                auth_opt = check_opt('conf', endpoints[dmn_grp][ep]['auth'])
 
             if auth is not None:
                 rc, msg = comm.auth_add(auth, auth_opt)
@@ -458,10 +443,7 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state):
                     continue
                 comm = comms[grp_name][agg_host['name']]
                 # the updater may already exist, in which case the add will fail
-                if 'offset' in updtr:
-                    offset = updtr['offset']
-                else:
-                    offset = None
+                offset = check_opt_int('offset', updtr)
                 if 'push' in updtr:
                     rc, msg = comm.updtr_add(updtr_name, interval=updtr['interval'], offset=offset, push=updtr['push'])
                 elif 'auto' in updtr and updtr['auto'] == "True":
@@ -475,10 +457,7 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state):
                 for regex in updtr['producers']:
                     comm.updtr_prdcr_add(updtr_name, regex['regex'])
                 for regex in updtr['sets']:
-                    if 'field' in regex:
-                        field = regex['field']
-                    else:
-                        field = None
+                    field = check_opt('field', regex)
                     err, msg = comm.updtr_match_add(updtr_name, regex['regex'], match=field)
 
                 err, msg = comm.updtr_start(updtr_name)
@@ -505,10 +484,7 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
                 plugin_config = plugin['config']
                 err, res = comm.plugn_load(plugin_name)
                 err, res = comm.plugn_config(plugin_name, **plugin_config)
-                if 'flush' in store:
-                    flush = store['flush']
-                else:
-                    flush = None
+                flush = check_opt('flush', store)
                 ## the stores may already exist, in which case the add will fail
                 err, res = comm.strgp_add(store_name,
                                           plugin_name,
