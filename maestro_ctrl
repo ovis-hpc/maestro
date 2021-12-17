@@ -17,7 +17,10 @@ class Cluster(object):
             print("Error {0} setting {1} : {2}".format(str(e), path, str(value)))
 
     def walk(self, obj, path=''):
-        if isinstance(obj, Mapping):
+        if obj is None:
+            if path.split("/")[-1] in CORE_ATTRS:
+                print(f'{path.split("/")[-1]} not present in ldms yaml configuration file.\nContinuing..')
+        elif isinstance(obj, Mapping):
             for key in obj:
                 self.walk(obj[key], '{0}/{1}'.format(path, str(key)))
         elif isinstance(obj, Sequence):
@@ -31,13 +34,6 @@ class Cluster(object):
                     item += 1
         elif obj:
             self.emit_value(path, obj)
-
-    def check_required(self, attr_list, container, container_name):
-        """Verify that each name in attr_list is in the container"""
-        for name in attr_list:
-            if name not in container:
-                raise ValueError("The '{0}' attribute is required in a {1}".
-                                 format(name, container_name))
 
     def build_daemons(self, config):
         """Generate a daemon spec list from YAML config
@@ -77,34 +73,19 @@ class Cluster(object):
         ep_dict = {}
         node_config = config['daemons']
         for spec in node_config:
-            self.check_required([ 'names', 'endpoints', 'hosts' ],
-                                spec, "daemons specification")
+            check_required([ 'names', 'endpoints', 'hosts' ],
+                           spec, "daemons specification")
             hosts = expand_names(spec['hosts'])
             ep_dict[spec['names']] = {}
             for ep in spec['endpoints']:
-                self.check_required([ 'names', 'ports' ],
-                                      ep, 'endpoint specification')
-                if 'xprt' in ep:
-                    xprt = ep['xprt']
-                else:
-                    xprt = 'sock'
-                if 'auth' in ep:
-                    auth = ep['auth']
-                    self.check_required([ 'name' ],
-                                        auth, "authentication configuration")
-                    auth_name = auth['name']
-                    if 'conf' in auth:
-                        auth_config = auth['conf']
-                    else:
-                        auth_config = None
-                else:
-                    auth_name = 'none'
-                    auth_config = None
+                check_required([ 'names', 'ports' ],
+                               ep, 'endpoint specification')
+                xprt = check_opt('xprt', ep)
+                auth_name = check_opt('auth', ep)
+                auth_conf = check_opt('conf', ep)
                 names = expand_names(ep['names'])
                 ports = expand_names(ep['ports'])
-                # build compute for each host x port
-                if 'maestro_comm' in ep:
-                    maestro_comm = parse_yaml_bool(ep['maestro_comm'])
+                maestro_comm = parse_yaml_bool(check_opt('maestro_comm', ep))
                 for host in hosts:
                     for port in ports:
                         name = names.pop(0)
@@ -114,7 +95,7 @@ class Cluster(object):
                             'port' : port,
                             'xprt' : xprt,
                             'maestro_comm' : maestro_comm,
-                            'auth' : { 'name' : auth_name, 'conf' : auth_config }
+                            'auth' : { 'name' : auth_name, 'conf' : auth_conf }
                         }
                         ep_dict[spec['names']][name] = h
         return ep_dict
@@ -125,8 +106,8 @@ class Cluster(object):
             return groups
         group_conf = config['daemons']
         for group_spec in group_conf:
-            self.check_required(['names', 'hosts', 'endpoints'],
-                                group_spec, "daemon specification")
+            check_required([ 'names', 'hosts', 'endpoints'],
+                           group_spec, "daemon specification")
             endpoints = []
             for ep in group_spec['endpoints']:
                 endpoints += expand_names(ep['names'])
@@ -146,8 +127,8 @@ class Cluster(object):
             return aggregators
         agg_conf = config['aggregators']
         for agg_spec in agg_conf:
-            self.check_required([ 'daemons' ],
-                                agg_spec, "aggregator specification")
+            check_required([ 'daemons' ],
+                           agg_spec, "aggregator specification")
             names = expand_names(agg_spec['daemons'])
             group = agg_spec['daemons']
             endpoints = []
@@ -185,9 +166,9 @@ class Cluster(object):
             if 'peers' not in agg:
                 continue
             for prod in agg['peers']:
-                self.check_required([ 'endpoints', 'updaters',
-                                      'reconnect', 'type', ],
-                                      prod, '"producer" entry')
+                check_required([ 'endpoints', 'updaters',
+                                 'reconnect', 'type', ],
+                               prod, '"producer" entry')
                 # Use endpoints for producer names and remove names attribute?
                 daemons = prod['daemons']
                 names = expand_names(prod['endpoints'])
@@ -196,10 +177,7 @@ class Cluster(object):
                 if group not in producers:
                     producers[group] = {}
 
-                if 'subscribe' in prod:
-                    subscribe = prod['subscribe']
-                else:
-                    subscribe = None
+                subscribe = check_opt('subscribe', prod)
                 if len(names) != len(endpoints):
                     raise ValueError('"producer": The "host" and "name" specifications must '
                                     'expand to the same number of strings')
@@ -235,8 +213,8 @@ class Cluster(object):
                 continue
             for prod in agg['peers']:
                 for updtr_spec in prod['updaters']:
-                    self.check_required([ 'interval', 'sets', ],
-                                        updtr_spec, '"updater" entry')
+                    check_required([ 'interval', 'sets', ],
+                                   updtr_spec, '"updater" entry')
                     group = agg['daemons']
                     if group not in updaters:
                         updaters[group] = {}
@@ -275,8 +253,8 @@ class Cluster(object):
             return None
         stores = {}
         for store_spec in config['stores']:
-            self.check_required([ 'name', 'plugin', 'container', 'schema' ],
-                                store_spec, '"store" entry')
+            check_required([ 'name', 'plugin', 'container', 'schema' ],
+                           store_spec, '"store" entry')
             group = store_spec['daemons']
             if group not in stores:
                 stores[group] = {}
@@ -286,9 +264,9 @@ class Cluster(object):
                 raise ValueError(f"Duplicate store name '{store_name}''. "
                             "A store name must be unique within the group")
 
-            self.check_required([ 'name', 'config'],
-                             store_spec['plugin'],
-                            '"store plugin" entry')
+            check_required([ 'name', 'config'],
+                           store_spec['plugin'],
+                           '"store plugin" entry')
             grp_stores[store_name] = store_spec
         return stores
 
@@ -302,10 +280,10 @@ class Cluster(object):
             return None
         smplrs = {}
         for smplr_spec in config['samplers']:
-            self.check_required([ 'daemons', 'plugins' ],
-                                  smplr_spec, '"sampler" entry')
+            check_required([ 'daemons', 'plugins' ],
+                           smplr_spec, '"sampler" entry')
             for plugin in smplr_spec['plugins']:
-                self.check_required(['name'], plugin, 'plugin entry')
+                check_required(['name'], plugin, 'plugin entry')
             smplrs[smplr_spec['daemons']] = smplr_spec
         return smplrs
 
@@ -319,8 +297,8 @@ class Cluster(object):
             return None
         plugins = {}
         for plugn_spec in config['plugins']:
-            self.check_required([ 'name', 'config' ],
-                                  plugn_spec, '"plugin" entry')
+            check_required([ 'name', 'config' ],
+                           plugn_spec, '"plugin" entry')
             group = plugn_spec['daemons']
             if group not in plugins:
                 plugins[group] = {}
@@ -359,15 +337,20 @@ class Cluster(object):
             self.walk(self.producers, '/' + self.name + '/producers')
             self.walk(self.updaters, '/' + self.name + '/updaters')
             self.walk(self.stores, '/' + self.name + '/stores')
-            if 'samplers' in self.cluster_config:
-                self.walk(self.samplers, '/' + self.name + '/samplers')
-            if 'plugins' in self.cluster_config:
-                self.walk(self.plugins, '/' + self.name + '/plugins')
+            self.walk(self.samplers, '/' + self.name + '/samplers')
+            self.walk(self.plugins, '/' + self.name + '/plugins')
             self.client.put('/'+self.name+'/last_updated', str(time.time()))
         except Exception as e:
             a, b, c = sys.exc_info()
             print(str(e)+' '+str(c.tb_lineno))
             return 1
+
+    def write_opt_attr(self, fd, attr, val, endline=True):
+        # Include leading space
+        if attr is not None:
+            fd.write(f' {attr}={val}')
+        if endline:
+            fd.write(f'\n')
 
     def write_producers(self, fd, group_name):
         #Writes producer configuration to file fd
@@ -385,15 +368,11 @@ class Cluster(object):
             prod_group = list(self.producers[group_name].keys())[idx:]
             smplr_group = self.producers[group_name][prod_group[0]]['daemons']
             i = 0
-            try:
-                auth = self.daemons[smplr_group][prod_group[0]]['auth']['name']
-                auth_opt = self.daemons[smplr_group][prod_group[0]]['auth']['conf']
-            except:
-                auth = None
+            auth = check_opt('auth', self.daemons[smplr_group][prod_group[0]])
+            auth_opt = check_opt('conf', self.daemons[smplr_group][prod_group[0]])
             if auth:
-                if len(auth_opt.split('=')) == 1:
-                    auth_opt = 'conf='+auth_opt
-                fd.write(f'auth_add name={auth} {auth_opt}\n')
+                fd.write(f'auth_add name={auth}')
+                self.write_opt_attr(fd, 'conf', auth_opt)
             for producer in prod_group:
                 if i >= loop:
                     break
@@ -426,11 +405,9 @@ class Cluster(object):
             fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
                      f'component_id=${{COMPONENT_ID}} '+
                      f'instance=${{HOSTNAME}}/{sname}\n')
-            if 'offset' in sampler:
-                offset = cvt_intrvl_str_to_us(sampler['offset'])
-                fd.write(f'start name={sname} interval={interval} offset={offset}\n')
-            else:
-                fd.write(f'start name={sname} interval={interval}\n')
+            fd.write(f'start name={sname} interval={interval}')
+            offset = check_opt('offset', sampler)
+            self.write_opt_attr(fd, 'offset', offset)
 
     def write_sampler_plugins(self, group_name):
         if self.plugins != None:
@@ -474,13 +451,10 @@ class Cluster(object):
                     updtr_str += 'push=onchange\n'
                 elif mode == 'auto_interval':
                     updtr_str += 'auto_interval=True\n'
-                elif 'offset' in updtr_group[updtr]:
-                    offset = cvt_intrvl_str_to_us(updtr_group[updtr]['offset'])
-                    fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
-                             f'interval={interval} offset={offset}\n')
-                else:
-                    fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
-                             f'interval={interval}\n')
+                fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
+                         f'interval={interval}')
+                offset = check_opt('offset', updtr_group[updtr])
+                self.write_opt_attr(fd, 'offset', offset)
                 for prod in updtr_group[updtr]['producers']:
                     fd.write(f'updtr_prdcr_add name={updtr_group[updtr]["name"]} '+
                              f'regex={prod["regex"]}\n')
@@ -498,12 +472,10 @@ class Cluster(object):
                     loaded_plugins.append(store_group[store]["plugin"]["name"])
                 strgp_add = f'strgp_add name={store} plugin={store_group[store]["plugin"]["name"]} '
                 strgp_add += f'container={store_group[store]["container"]} '
-                strgp_add += f'schema={store_group[store]["schema"]} '
-                if 'flush' in store_group[store]:
-                    strgp_add += f'flush={store_group[store]["flush"]}\n'
-                else:
-                    strgp_add += '\n'
+                strgp_add += f'schema={store_group[store]["schema"]}'
                 fd.write(strgp_add)
+                flush = check_opt('flush', store_group[store])
+                self.write_opt_attr(fd, 'flush', flush)
                 fd.write(f'strgp_start name={store}\n')
 
     def config_v4(self, path):
