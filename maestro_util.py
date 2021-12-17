@@ -1,9 +1,30 @@
 import collections
 import hostlist
 
-OMIT_ATTRS = [
+AUTH_ATTRS = [
+    'auth',
+    'conf'
+]
+
+CORE_ATTRS = [
+    'daemons',
+    'aggregators',
+    'samplers',
+    'stores'
+]
+
+DEFAULT_ATTR_VAL = {
+    'maestro_comm' : False,
+    'xprt'         : 'sock',
+    'interval'     : 1000000,
+    'auth'         : 'none',
+    'mode'         : 'static'
+}
+
+INT_ATTRS = [
     'interval',
-    'offset'
+    'offset',
+    'reconnect'
 ]
 
 def cvt_intrvl_str_to_us(interval_s):
@@ -73,21 +94,27 @@ def check_offset(interval_us, offset_us=None):
 
 def check_opt(attr, spec):
     # Check for optional argument and return None if not present
+    if attr in AUTH_ATTRS:
+        if attr == 'auth':
+            attr = 'name'
+        if 'auth' in spec:
+            spec = spec['auth']
     if attr in spec:
+        if attr in INT_ATTRS:
+            return cvt_intrvl_str_to_us(spec[attr])
         return spec[attr]
     else:
-        return None
-
-def check_opt_int(attr, spec):
-    if attr in spec:
-        return cvt_intrvl_str_to_us(spec[attr])
-    else:
-        if attr == 'interval':
-            return 1000000
-        elif attr == 'offset':
-            return None
+        if attr in DEFAULT_ATTR_VAL:
+            return DEFAULT_ATTR_VAL[attr]
         else:
             return None
+
+def check_required(attr_list, container, container_name):
+    """Verify that each name in attr_list is in the container"""
+    for name in attr_list:
+        if name not in container:
+            raise ValueError("The '{0}' attribute is required in a {1}".
+                             format(name, container_name))
 
 def expand_names(name_spec):
     if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
@@ -101,7 +128,7 @@ def expand_names(name_spec):
 def parse_to_cfg_str(cfg_obj):
     cfg_str = ''
     for key in cfg_obj:
-        if key not in OMIT_ATTRS:
+        if key not in INT_ATTRS:
             if len(cfg_str) > 8:
                 cfg_str += ' '
             cfg_str += key + '=' + str(cfg_obj[key])
