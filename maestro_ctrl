@@ -16,13 +16,24 @@ class Cluster(object):
         except Exception as e:
             print("Error {0} setting {1} : {2}".format(str(e), path, str(value)))
 
+    def check_key(self, key):
+        # Handle forward slash in keys e.g. endpoints containing "/" in the name
+        try:
+            if '/' in key:
+                print(f'Error: "/" is not a supported character in key name {key}')
+                sys.exit(1)
+            return key
+        except Exception as e:
+            print(str(e))
+
     def walk(self, obj, path=''):
         if obj is None:
             if path.split("/")[-1] in CORE_ATTRS:
                 print(f'{path.split("/")[-1]} not present in ldms yaml configuration file.\nContinuing..')
         elif isinstance(obj, Mapping):
             for key in obj:
-                self.walk(obj[key], '{0}/{1}'.format(path, str(key)))
+                safe_key = self.check_key(key)
+                self.walk(obj[key], '{0}/{1}'.format(path, safe_key))
         elif isinstance(obj, Sequence):
             if isinstance(obj, (str, bytearray)):
                 self.emit_value(path, obj)
@@ -61,12 +72,15 @@ class Cluster(object):
         results in the following host-spec dictionary:
 
         {
-        "agg-[[1-3]-10002]" : [
-          "node-1-10002" : { "host" : "node-1", "port" : 10002 },
-          "node-2-10002" : { "host" : "node-2", "port" : 10002 },
-          "node-3-10002" : { "host" : "node-3", "port" : 10002 },
-          ...
-        ]
+        "agg-[[1-3]-[10002]" : {
+          "agg-1" : {
+            "endpoints": {
+              "node-1-10002" : { "host" : "node-1", "port" : 10002 },
+              "node-2-10002" : { "host" : "node-2", "port" : 10002 },
+              "node-3-10002" : { "host" : "node-3", "port" : 10002 },
+              ...
+            }
+          }
         }
 
         """
@@ -76,28 +90,38 @@ class Cluster(object):
             check_required([ 'names', 'endpoints', 'hosts' ],
                            spec, "daemons specification")
             hosts = expand_names(spec['hosts'])
+            dnames = expand_names(spec['names'])
+            ep_names = []
+            ports = []
+            for endpoints in spec['endpoints']:
+                check_required(['names','ports'],
+                               endpoints, 'endpoint specification')
+                ep_names.append(expand_names(endpoints['names']))
+                epnames = expand_names(endpoints['names'])
+                ep_ports = expand_names(endpoints['ports'])
+                if len(ep_ports) != len(epnames):
+                    ep_ports += [ ep_ports[0] for i in range(0, len(epnames)) ]
+                ports.append(ep_ports)
             ep_dict[spec['names']] = {}
-            for ep in spec['endpoints']:
-                check_required([ 'names', 'ports' ],
-                               ep, 'endpoint specification')
-                xprt = check_opt('xprt', ep)
-                auth_name = check_opt('auth', ep)
-                auth_conf = check_opt('conf', ep)
-                names = expand_names(ep['names'])
-                ports = expand_names(ep['ports'])
-                maestro_comm = parse_yaml_bool(check_opt('maestro_comm', ep))
-                for host in hosts:
-                    for port in ports:
-                        name = names.pop(0)
-                        h = {
-                            'name' : name,
-                            'addr' : host,
-                            'port' : port,
-                            'xprt' : xprt,
-                            'maestro_comm' : maestro_comm,
-                            'auth' : { 'name' : auth_name, 'conf' : auth_conf }
-                        }
-                        ep_dict[spec['names']][name] = h
+            for dname, host in zip(dnames, hosts):
+                ep_dict[spec['names']][dname] = {}
+                ep_dict[spec['names']][dname]['endpoints'] = {}
+                for ep_, ep_port, ep in zip(ep_names, ports, spec['endpoints']):
+                    port = ep_port.pop(0)
+                    ep_name = ep_.pop(0)
+                    xprt = check_opt('xprt', ep)
+                    auth_name = check_opt('auth', ep)
+                    auth_conf = check_opt('conf', ep)
+                    maestro_comm = parse_yaml_bool(check_opt('maestro_comm', ep))
+                    h = {
+                        'name' : ep_name,
+                        'addr' : host,
+                        'port' : port,
+                        'xprt' : xprt,
+                        'maestro_comm' : maestro_comm,
+                        'auth' : { 'name' : auth_name, 'conf' : auth_conf }
+                    }
+                    ep_dict[spec['names']][dname]['endpoints'][ep_name] = h
         return ep_dict
 
     def build_groups(self, config):
@@ -141,16 +165,12 @@ class Cluster(object):
             for eps in daemons_['endpoints']:
                 if eps['maestro_comm'] is True:
                     endpoints += expand_names(eps['names'])
-            if len(names) != len(endpoints):
-                raise ValueError('"aggregators:" The "host" and "name" specifications must '
-                                'expand to the same number of names')
             if group not in aggregators:
                 aggregators[group] = []
             for name in names:
                 endpoint = endpoints.pop(0)
                 agg = {
                         'name'      : name,
-                        'endpoint'  : endpoint,
                         'state'     : 'stopped' # 'running', 'error'
                 }
                 aggregators[group].append(agg)
@@ -174,21 +194,24 @@ class Cluster(object):
                 names = expand_names(prod['endpoints'])
                 endpoints = expand_names(prod['endpoints'])
                 group = agg['daemons']
+                smplr_dmns = expand_names(prod['daemons'])
                 if group not in producers:
                     producers[group] = {}
 
                 subscribe = check_opt('subscribe', prod)
                 if len(names) != len(endpoints):
                     raise ValueError('"producer": The "host" and "name" specifications must '
-                                    'expand to the same number of strings')
+                                     '            expand to the same number of strings')
                 upd_spec = prod['updaters']
                 # Expand and generate all the producers
                 typ = prod['type']
                 reconnect = cvt_intrvl_str_to_us(prod['reconnect'])
                 for name in names:
+                    smplr_dmn = smplr_dmns.pop(0)
                     endpoint = endpoints.pop(0)
                     prod = {
-                        'daemons'   : daemons,
+                        'daemon'    : smplr_dmn,
+                        'dmn_grp'   : daemons,
                         'name'      : name,
                         'endpoint'  : endpoint,
                         'type'      : typ,
@@ -366,22 +389,29 @@ class Cluster(object):
             else:
                 idx = prdcrs.index(last_sampler) + 1
             prod_group = list(self.producers[group_name].keys())[idx:]
-            smplr_group = self.producers[group_name][prod_group[0]]['daemons']
             i = 0
-            auth = check_opt('auth', self.daemons[smplr_group][prod_group[0]])
-            auth_opt = check_opt('conf', self.daemons[smplr_group][prod_group[0]])
-            if auth:
+            auth = None
+            auths = {}
+            for ep in self.producers[group_name]:
+                producer = self.producers[group_name][ep]
+                auth = check_opt('auth', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
+                auth_opt = check_opt('conf', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
+                if auth in auths:
+                    continue
+                else:
+                    auths[auth] = { 'conf' : auth_opt }
+            for auth in auths:
                 fd.write(f'auth_add name={auth}')
-                self.write_opt_attr(fd, 'conf', auth_opt)
-            for producer in prod_group:
+                self.write_opt_attr(fd, 'conf', auths[auth]['conf'])
+            for ep in prod_group:
                 if i >= loop:
                     break
                 regex = False
-                producer = self.producers[group_name][producer]
+                producer = self.producers[group_name][ep]
                 pname = producer['name']
-                port = self.daemons[producer['daemons']][producer['endpoint']]['port']
-                xprt = self.daemons[producer['daemons']][producer['endpoint']]['xprt']
-                hostname = self.daemons[producer['daemons']][producer['endpoint']]['addr']
+                port = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['port']
+                xprt = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['xprt']
+                hostname = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['addr']
                 ptype = producer['type']
                 interval = producer['reconnect']
                 fd.write(f'prdcr_add name={pname} '+
