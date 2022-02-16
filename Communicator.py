@@ -186,11 +186,38 @@ class Communicator(object):
         except Exception:
             return errno.ENOTCONN, None
 
+    def listen(self, xprt, port, host=None, auth=None):
+        """
+        Add a listening endpoint
+
+        Parameters:
+        xprt - Transport name [sock, rdma, ugni]
+        port - Port number
+        [host] - Hostname
+        [auth] - Authentication domain - If none, the default
+                 authentication given the command line
+                 (-a and -A) will be used
+
+        """
+        attr_list = [ LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.XPRT, value=xprt),
+                      LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PORT, value=port)
+        ]
+        req = LDMSD_Request(
+                command='listen',
+                attrs=attr_list
+              )
+        try:
+            req.send(self)
+            resp = req.receive(self)
+            return resp['errcode'], resp['msg']
+        except Exception as e:
+            return errno.ENOTCONN, None
+
     def plugn_load(self, name):
         """
         Load an LDMSD plugin.
 
-        Parameters::
+        Parameters:
         name  - The plugin name
 
         Returns:
@@ -266,7 +293,7 @@ class Communicator(object):
         """
         Load an LDMSD sampler plugin.
 
-        Parameters::
+        Parameters:
         name  - The plugin name
 
         Returns:
@@ -312,7 +339,7 @@ class Communicator(object):
             self.close()
             return errno.ENOTCONN, None
         err = resp['errcode']
-        if err == 0:
+        if err == 0 and resp['msg'] is not None:
             status = json.loads(resp['msg'])
         else:
             status = None

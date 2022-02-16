@@ -368,9 +368,26 @@ class Cluster(object):
             print(str(e)+' '+str(c.tb_lineno))
             return 1
 
+    def write_listeners(self, fd, dmn_grp):
+        for dmn_name in self.daemons[dmn_grp]:
+            for endp in self.daemons[dmn_grp][dmn_name]['endpoints']:
+                ep = self.daemons[dmn_grp][dmn_name]['endpoints'][endp]
+                if ep['maestro_comm'] is False:
+                    auth = check_opt
+                    auth = check_opt('auth', ep)
+                    auth_opt = check_opt('conf', ep)
+                    if auth:
+                        fd.write(f'auth_add')
+                        self.write_opt_attr(fd, 'name', auth, endline=False)
+                        self.write_opt_attr(fd, 'conf', auth_opt, endline=True)
+                    fd.write(f'listen xprt={ep["xprt"]} port={ep["port"]}')
+                    self.write_opt_attr(fd, 'auth', auth, endline=False)
+                    self.write_opt_attr(fd, 'conf', auth_opt)
+            break
+
     def write_opt_attr(self, fd, attr, val, endline=True):
         # Include leading space
-        if attr is not None:
+        if val is not None:
             fd.write(f' {attr}={val}')
         if endline:
             fd.write(f'\n')
@@ -528,6 +545,7 @@ class Cluster(object):
                             continue
                         fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
                         self.write_samplers(fd, smplr_group)
+                        self.write_listeners(fd, smplr_group)
                     if fd:
                         fd.close()
                 except Exception as e:
@@ -545,6 +563,7 @@ class Cluster(object):
                 last_sampler = None
                 for agg in self.aggregators[group_name]:
                     fd = open(f'{path}/{group_name}-{agg["name"]}.conf', 'w+')
+                    self.write_listeners(fd, group_name)
                     self.write_producers(fd, group_name)
                     self.write_agg_plugins(fd, group_name)
                     self.write_updaters(fd, group_name)
@@ -602,7 +621,7 @@ if __name__ == "__main__":
     # blow away the existing configuration
     rc = cluster.save_config()
     if rc:
-        print("Error saving ldms cluster configuration to etcd cluster")
+        print("Error saving ldms cluster configuration to etcd cluster.")
         sys.exit(0)
     print("LDMS aggregator configuration saved to etcd cluster.")
 
