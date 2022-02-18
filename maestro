@@ -29,6 +29,7 @@ class MaestroMonitor(object):
         self.do_rebalance = False
         self.res_samplers = False
         self.reset_conf()
+        start_agg_daemons(self.aggregators, self.args.start_aggregators)
         self.comms = self.build_comms()
         self.etcd_event_handler = {
             'endpoints'   : self.__reconf_endpoints,
@@ -52,7 +53,7 @@ class MaestroMonitor(object):
 
     def build_comms(self):
         comms = {}
-        for dmn_grp in self.aggregators:
+        for dmn_grp in self.daemons:
             comms[dmn_grp] = {}
             for dmn_name in self.daemons[dmn_grp]:
                 listen = []
@@ -61,14 +62,6 @@ class MaestroMonitor(object):
                     if 'maestro_comm' not in ep:
                         listen.append(ep)
                         continue
-                    if self.args.start_aggregators:
-                        # For now create log and pid files in log subdirectory
-                        subprocess.run(['ldmsd',
-                                        '-x', ep['xprt']+':'+ep['port'],
-                                        '-a', ep['auth']['name'],
-                                        '-l', 'log/'+dmn_name+'.log',
-                                        '-m', '2g',
-                                        '-r', 'log/'+dmn_name+'.pid'])
                     conf = check_opt('conf', ep)
                     comm = Communicator(ep['xprt'],
                                         ep['addr'],
@@ -83,27 +76,6 @@ class MaestroMonitor(object):
 
                 add_listeners(comm, dmn_name, listen)
 
-        for daemon_grp in self.samplers:
-            comms[daemon_grp] = {}
-            for dmn_name in self.daemons[daemon_grp]:
-                listen = []
-                for ep_name in self.daemons[daemon_grp][dmn_name]['endpoints']:
-                    ep = self.daemons[daemon_grp][dmn_name]['endpoints'][ep_name]
-                    if 'maestro_comm' not in ep:
-                        listen.append(ep)
-                        continue
-                    conf = check_opt('conf', ep)
-                    comm = Communicator(ep['xprt'],
-                                        ep['addr'],
-                                        ep['port'],
-                                        ep['auth']['name'],
-                                        {'conf':conf})
-                    rc = comm.connect()
-                    if rc:
-                        comms[daemon_grp][dmn_name] = comm
-                    else:
-                        print(f'Unable to connect to first endpoint, checking for another endpoint in daemon cfg...')
-                add_listeners(comm, dmn_name, listen)
         return comms
 
     def check_samplers(self):
@@ -346,6 +318,26 @@ def config_samplers(comms, samplers, daemons):
                     print(f"Error: {err} {msg} configuring {smplr}")
                     continue
     return True
+
+def start_agg_daemons(aggregators, start_aggs):
+    if start_aggs:
+        for dmn_grp in aggregators:
+            comms[dmn_grp] = {}
+            for dmn_name in self.daemons[dmn_grp]:
+                listen = []
+                for ep_name in self.daemons[dmn_grp][dmn_name]['endpoints']:
+                    ep = self.daemons[dmn_grp][dmn_name]['endpoints'][ep_name]
+                    if 'maestro_comm' not in ep:
+                        listen.append(ep)
+                        continue
+                    if self.args.start_aggregators:
+                        # For now create log and pid files in log subdirectory
+                        subprocess.run(['ldmsd',
+                                        '-x', ep['xprt']+':'+ep['port'],
+                                        '-a', ep['auth']['name'],
+                                        '-l', 'log/'+dmn_name+'.log',
+                                        '-m', '2g',
+                                        '-r', 'log/'+dmn_name+'.pid'])
 
 def start_samplers(comms, samplers, daemons):
     for smplr_group in samplers:
