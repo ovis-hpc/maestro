@@ -341,7 +341,6 @@ class Cluster(object):
         self.cluster_config = cluster_config
         self.daemons = self.build_daemons(cluster_config)
         self.aggregators = self.build_aggregators(cluster_config)
-        self.groups = self.build_groups(cluster_config)
         self.producers = self.build_producers(cluster_config)
         self.updaters = self.build_updaters(cluster_config)
         self.stores = self.build_stores(cluster_config)
@@ -356,7 +355,6 @@ class Cluster(object):
             self.client.delete_prefix('/' + self.name)
             self.walk(self.daemons, '/' + self.name + '/daemons')
             self.walk(self.aggregators, '/' + self.name + '/aggregators')
-            self.walk(self.groups, '/' + self.name + '/groups')
             self.walk(self.producers, '/' + self.name + '/producers')
             self.walk(self.updaters, '/' + self.name + '/updaters')
             self.walk(self.stores, '/' + self.name + '/stores')
@@ -531,10 +529,7 @@ class Cluster(object):
         This configuration assumes that the environemnt variables COMPONENT_ID, HOSTNAME
         all exist on the machines relevant to the ldmsd cluster.
         """
-        for group_name in self.groups:
-            # Load sampler statements
-            group = self.groups[group_name]
-
+        for group_name in self.daemons:
             # Sampler config
             if self.samplers != None:
                 try:
