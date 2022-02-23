@@ -534,13 +534,11 @@ class Cluster(object):
             if self.samplers != None:
                 try:
                     self.write_sampler_plugins(self)
-                    for smplr_group in self.samplers:
-                        # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
-                        if group_name != smplr_group:
-                            continue
+                    # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
+                    if group_name in self.samplers:
                         fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
-                        self.write_samplers(fd, smplr_group)
-                        self.write_listeners(fd, smplr_group)
+                        self.write_samplers(fd, group_name)
+                        self.write_listeners(fd, group_name)
                     if fd:
                         fd.close()
                 except Exception as e:
