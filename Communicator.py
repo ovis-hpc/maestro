@@ -213,6 +213,16 @@ class Communicator(object):
         except Exception as e:
             return errno.ENOTCONN, None
 
+    def dir_list(self):
+        """
+        Return the dir sets of this ldms daemon
+        """
+        try:
+            dlist = self.ldms.dir()
+            return 0, dlist
+        except Exception as e:
+            return errno.ENOTCONN, None
+
     def plugn_load(self, name):
         """
         Load an LDMSD plugin.
@@ -738,6 +748,30 @@ class Communicator(object):
                 attrs = [
                     LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name)
                 ])
+        try:
+            req.send(self)
+            resp = req.receive(self)
+            return resp['errcode'], resp['msg']
+        except Exception:
+            self.close()
+            return errno.ENOTCONN, None
+
+    def updtr_status(self, name=None):
+        """
+        Get the status of all updaters on a producer.
+
+        Parameters:
+        name - The name of the producer on which updater status is requested
+
+        Returns:
+        A tuple of status, data
+        - status is an errno from the errno module
+        - data is the status of updaters on the producer, None if none exist, or an error message if status !=0.
+        """
+        attrs = []
+        if name:
+            attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_ATTR.NAME, value=name))
+        req = LDMSD_Request(command_id=LDMSD_Request.UPDTR_STATUS, attrs=attrs)
         try:
             req.send(self)
             resp = req.receive(self)
