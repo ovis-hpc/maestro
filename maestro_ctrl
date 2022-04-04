@@ -68,6 +68,7 @@ class Cluster(object):
                 xprt : sock
                 auth :
                   name : munge
+                  plugin : munge
 
         results in the following host-spec dictionary:
 
@@ -112,6 +113,7 @@ class Cluster(object):
                     xprt = check_opt('xprt', ep)
                     auth_name = check_opt('auth', ep)
                     auth_conf = check_opt('conf', ep)
+                    plugin = check_opt('plugin', ep['auth'])
                     maestro_comm = parse_yaml_bool(check_opt('maestro_comm', ep))
                     h = {
                         'name' : ep_name,
@@ -119,7 +121,7 @@ class Cluster(object):
                         'port' : port,
                         'xprt' : xprt,
                         'maestro_comm' : maestro_comm,
-                        'auth' : { 'name' : auth_name, 'conf' : auth_conf }
+                        'auth' : { 'name' : auth_name, 'conf' : auth_conf, 'plugin' : plugin }
                     }
                     ep_dict[spec['names']][dname]['endpoints'][ep_name] = h
         return ep_dict

@@ -514,8 +514,9 @@ def add_listeners(comm, dmn_name, listeners):
     for ep in listeners:
         auth = check_opt('auth', ep)
         auth_opt = check_opt('conf', ep)
+        plugin = check_opt('plugin', ep['auth'])
         if auth != comm.auth:
-            rc, msg = comm.auth_add(auth, auth_opt)
+            rc, msg = comm.auth_add(auth, plugin, auth_opt)
             if rc:
                 print(f'Error adding authentication domain {auth} to sampler {dmn_name}: {msg}')
                 if rc == 17:
@@ -564,9 +565,10 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                 dmn = prod_dict[ep]['daemon']
                 auth = check_opt('auth', endpoints[dmn_grp][dmn]['endpoints'][ep])
                 auth_opt = check_opt('conf', endpoints[dmn_grp][dmn]['endpoints'][ep])
+                plugin = check_opt('plugin', endpoints[dmn_grp][dmn]['endpoints'][ep]['auth'])
 
             if auth is not None:
-                rc, msg = comm.auth_add(auth, auth_opt)
+                rc, msg = comm.auth_add(auth, plugin, auth_opt)
                 if rc:
                     print(f'Error adding authentication domain {auth} to aggregator {agg_name}')
                     print(f'Error code {rc}: {msg}')
