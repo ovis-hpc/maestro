@@ -8,6 +8,7 @@ import etcd3
 import json
 import threading, queue
 import time
+import re
 from Communicator import Communicator
 from maestro_util import *
 
@@ -235,7 +236,7 @@ class MaestroMonitor(object):
                     for set_ in list(grp_sets[smplr]['sets']):
                         if agg_set_size + grp_sets[smplr]['sets'][set_] <= bytes_per_agg and grp_sets[smplr]['sets'][set_] != 0:
                             agg_set_size += grp_sets[smplr]['sets'][set_]
-                            if smplr not in self.aggregators[group][agg]['sets']:
+                            if smplr not in self.aggregators[group][agg]['prdcrs']:
                                 self.aggregators[group][agg]['prdcrs'][smplr] = {}
                                 self.aggregators[group][agg]['prdcrs'][smplr]['sets'] = {}
                             self.aggregators[group][agg]['prdcrs'][smplr]['sets'][set_] = grp_sets[smplr]['sets'].pop(set_)
@@ -640,6 +641,10 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                 if rb == 'sets':
                     for prdcr_sets in aggregators[grp_name][agg_name]['prdcrs']:
                         for _set in aggregators[grp_name][agg_name]['prdcrs'][prdcr_sets]['sets']:
+                            if 'regex' in updtr['sets']:
+                                res = re.match(updtr_['set']['regex'], set_)
+                                if not res:
+                                    continue
                             err, msg = comm.updtr_match_add(agg_updtr, _set, match='inst')
                             if err:
                                 print(f'Error {err} : {msg} matching metric set {_set} to {agg_updtr}')

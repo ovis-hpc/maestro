@@ -976,6 +976,29 @@ class Communicator(object):
             self.close()
             return errno.ENOTCONN, None
 
+    def updtr_match_list(self, name=None):
+        """
+        Return a list of sets that an updater is matched to update.
+        name - The update policy name
+
+        Returns:
+        A tuple of status, data
+        - status is an errno from the errno module
+        - data is a list of updaters and their sets, None if none exist, or an error message if status !=0.
+        """
+        req = LDMSD_Request(
+            command_id=LDMSD_Request.UPDTR_MATCH_LIST,
+            attrs=[
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name)
+            ])
+        try:
+            req.send(self)
+            resp = req.receive(self)
+            return resp['errcode'], resp['msg']
+        except Exception:
+            self.close()
+            return errno.ENOTCONN, None
+
     def strgp_add(self, name, plugin, container, schema, perm=0o777, flush=None):
         """
         Add a Storage Policy that will store metric set data when
