@@ -85,6 +85,7 @@ class Communicator(object):
         self.state = self.INIT
         self.auth = auth
         self.auth_opt = auth_opt
+        self.ldms = None
         self.ldms = ldms.Xprt(name=self.xprt, auth=auth, auth_opts=auth_opt)
 
         if not self.ldms:
@@ -161,7 +162,7 @@ class Communicator(object):
             raise ConnectionError(str(e))
         return rsp
 
-    def auth_add(self, name, auth_opt=None):
+    def auth_add(self, name, plugin=None, auth_opt=None):
         """
         Add an authentication domain
         Parameters:
@@ -169,12 +170,12 @@ class Communicator(object):
         <plugin-specific attribute> e.g. conf=ldmsauth.conf
         """
         attrs=[ LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name) ]
+        if plugin is not None:
+            attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PLUGIN, value=plugin))
         if auth_opt:
-            if len(auth_opt.split('=')) > 1:
-                attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.STRING, value=auth_opt))
-            else:
+            if len(auth_opt.split('=')) == 1:
                 auth_opt = 'conf='+auth_opt
-                attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.STRING, value=auth_opt))
+            attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.STRING, value=auth_opt))
         req = LDMSD_Request(
                 command_id=LDMSD_Request.AUTH_ADD,
                 attrs=attrs
@@ -202,6 +203,8 @@ class Communicator(object):
         attr_list = [ LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.XPRT, value=xprt),
                       LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PORT, value=port)
         ]
+        if auth:
+            attr_list.append(LDMSD_Req_Attr(attr_name='auth', value=auth))
         req = LDMSD_Request(
                 command='listen',
                 attrs=attr_list
@@ -210,6 +213,16 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
+        except Exception as e:
+            return errno.ENOTCONN, None
+
+    def dir_list(self):
+        """
+        Return the dir sets of this ldms daemon
+        """
+        try:
+            dlist = self.ldms.dir()
+            return 0, dlist
         except Exception as e:
             return errno.ENOTCONN, None
 
@@ -746,6 +759,30 @@ class Communicator(object):
             self.close()
             return errno.ENOTCONN, None
 
+    def updtr_status(self, name=None):
+        """
+        Get the status of all updaters on a producer.
+
+        Parameters:
+        name - The name of the producer on which updater status is requested
+
+        Returns:
+        A tuple of status, data
+        - status is an errno from the errno module
+        - data is the status of updaters on the producer, None if none exist, or an error message if status !=0.
+        """
+        attrs = []
+        if name:
+            attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_ATTR.NAME, value=name))
+        req = LDMSD_Request(command_id=LDMSD_Request.UPDTR_STATUS, attrs=attrs)
+        try:
+            req.send(self)
+            resp = req.receive(self)
+            return resp['errcode'], resp['msg']
+        except Exception:
+            self.close()
+            return errno.ENOTCONN, None
+
     def updtr_start(self, name, interval=None, offset=None, auto=None):
         """
         Start a STOPPED updater.
@@ -931,6 +968,29 @@ class Communicator(object):
                     LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.REGEX, value=regex),
                     LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.MATCH, value=match)
                 ])
+        try:
+            req.send(self)
+            resp = req.receive(self)
+            return resp['errcode'], resp['msg']
+        except Exception:
+            self.close()
+            return errno.ENOTCONN, None
+
+    def updtr_match_list(self, name=None):
+        """
+        Return a list of sets that an updater is matched to update.
+        name - The update policy name
+
+        Returns:
+        A tuple of status, data
+        - status is an errno from the errno module
+        - data is a list of updaters and their sets, None if none exist, or an error message if status !=0.
+        """
+        req = LDMSD_Request(
+            command_id=LDMSD_Request.UPDTR_MATCH_LIST,
+            attrs=[
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name)
+            ])
         try:
             req.send(self)
             resp = req.receive(self)

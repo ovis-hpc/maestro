@@ -8,11 +8,12 @@ import etcd3
 import json
 import threading, queue
 import time
+import re
 from Communicator import Communicator
 from maestro_util import *
 
 def agg_hosts(grp_name, aggs, daemons):
-    return [ [ dmn['name'], daemons[grp_name][dmn['name']]['endpoints'][ep]] for dmn in aggs[grp_name] for ep in daemons[grp_name][dmn['name']]['endpoints'] ]
+    return [ [ dmn, daemons[grp_name][dmn]['endpoints'][ep]] for dmn in aggs[grp_name] for ep in daemons[grp_name][dmn]['endpoints'] if 'maestro_comm' in daemons[grp_name][dmn]['endpoints'][ep] ]
 
 class MaestroMonitor(object):
     def __init__(self, prefix, config, args):
@@ -25,6 +26,10 @@ class MaestroMonitor(object):
                                                   ('grpc.max_receive_message_length',16*1024*1024)])
         self.config = self.load_config()
         self.args = args
+        if self.args.rebalance != 'sets' and self.args.rebalance != 'producers':
+            print(f'"rebalance" parameter must be assigned to either "sets" or "producers"\n'\
+                   'If no argument is specified, maestro will balance across producers by default')
+            sys.exit(1)
         self.json_config = json.dumps(config)
         self.do_rebalance = False
         self.res_samplers = False
@@ -40,16 +45,43 @@ class MaestroMonitor(object):
             'stores'      : self.__reconf_stores,
             'updaters'    : self.__reconf_updaters
         }
+        self.rebalance_handler = {
+            'producers' : self.__rebalance_prdcrs,
+            'sets'      : self.__rebalance_sets
+        }
 
     def reset_conf(self):
+        """
+        Re-build the entire config for each of the load balance groups
+        """
         self.daemons = self.config[self.prefix]['daemons']
+        self.set_samplers()
+        if 'producers' in self.config[self.prefix]:
+            self.producers = self.config[self.prefix]['producers']
+        else:
+            self.producers = {}
+        self.producers = self.config[self.prefix]['producers']
+        self.set_aggs()
+        self.updaters = self.config[self.prefix]['updaters']
+        if 'stores' in self.config[self.prefix]:
+            self.stores = self.config[self.prefix]['stores']
+        else:
+            self.stores = {}
+
+    def set_aggs(self):
+        self.aggregators = {}
+        if 'aggregators' in self.config[self.prefix]:
+            for group in self.config[self.prefix]['aggregators']:
+                self.aggregators[group] = {}
+                for agg in self.config[self.prefix]['aggregators'][group]:
+                    self.aggregators[group][agg['name']] = agg
+                    self.aggregators[group][agg['name']]['prdcrs'] = {}
+
+    def set_samplers(self):
         if 'samplers' in self.config[self.prefix]:
             self.samplers = self.config[self.prefix]['samplers']
         else:
             self.samplers = {}
-        self.producers = self.config[self.prefix]['producers']
-        self.aggregators = self.config[self.prefix]['aggregators']
-        self.updaters = self.config[self.prefix]['updaters']
 
     def build_comms(self):
         comms = {}
@@ -69,16 +101,32 @@ class MaestroMonitor(object):
                                         ep['auth']['name'],
                                         { 'conf' : conf })
                     rc = comm.connect()
-                    if rc:
-                         comms[dmn_grp][dmn_name] = comm
-                    else:
+                    if not rc:
                         print(f'Failed to communicate with aggregator {dmn_name} on endpoint {ep["name"]}')
-
+                    comms[dmn_grp][dmn_name] = comm
                 add_listeners(comm, dmn_name, listen)
-
         return comms
 
+    def check_aggs(self, group, agg_state):
+        """
+        Build list of responsive aggregators in READY state
+        """
+        grp_aggs = []
+        for agg in self.aggregators[group]:
+            if agg not in agg_state[group]:
+                print(f'Could not connect to {agg}')
+                continue
+            elif agg_state[group][agg] != 'ready':
+                print(f'{agg} not in READY state')
+                continue
+            grp_aggs.append(agg)
+        return grp_aggs
+
     def check_samplers(self):
+        """
+        Build a dict of plugins that have been configured
+        for existing samplers.
+        """
         cfg_smplrs = {}
         for dmn_grp in self.samplers:
             cfg_smplrs[dmn_grp] = {}
@@ -109,7 +157,10 @@ class MaestroMonitor(object):
         if pfx[0] != '/':
             pfx = '/' + self.prefix
         config = {}
-        kv_config = self.client.get_prefix(pfx)
+        try:
+            kv_config = self.client.get_prefix(pfx)
+        except:
+            sys.exit('Unable to connect to etcd')
         for v, m in kv_config:
             path = m.key.decode('utf-8')
             s = path.split('/')
@@ -145,7 +196,7 @@ class MaestroMonitor(object):
         pass
 
     def __reconf_aggregators(self, config):
-        pass
+        self.set_aggs()
 
     def __reconf_producers(self, config):
         pass
@@ -159,43 +210,75 @@ class MaestroMonitor(object):
     def __reconf_updaters(self, config):
         pass
 
-    def rebalance(self, agg_state):
-        """
-        Re-build the config for each of the load balance groups
-        """
-        groups = {}
-        if 'daemons' in self.config[self.prefix]:
-            self.daemons = self.config[self.prefix]['daemons']
-        else:
-            self.daemons = {}
-        if 'producers' in self.config[self.prefix]:
-            self.producers = self.config[self.prefix]['producers']
-        else:
-            self.producers = {}
-        if 'samplers' in self.config[self.prefix]:
-            self.samplers = self.config[self.prefix]['samplers']
-        else:
-            self.samplers = {}
-        if 'aggregators' in self.config[self.prefix]:
-            self.aggregators = self.config[self.prefix]['aggregators']
-        else:
-            self.aggregators = {}
-        if 'stores' in self.config[self.prefix]:
-            self.stores = self.config[self.prefix]['stores']
-        else:
-            self.stores = {}
+    def balance_remainder(self, group, grp_aggs, grp_sets, rem):
+        rb_aggs = []
+        n = len(grp_aggs)
+        for agg in reversed(grp_aggs):
+            for smplr in list(grp_sets):
+                for set_ in list(grp_sets[smplr]['sets']):
+                    if smplr not in self.aggregators[group][agg]['prdcrs']:
+                        self.aggregators[group][agg]['prdcrs'][smplr] = {}
+                        self.aggregators[group][agg]['prdcrs'][smplr]['sets'] = {}
+                    rem -= grp_sets[smplr]['sets'][set_]
+                    self.aggregators[group][agg]['prdcrs'][smplr]['sets'][set_] = grp_sets[smplr]['sets'].pop(set_)
+                    break
+                break
+        return rem
+
+    def balance_sets(self, group, grp_aggs, grp_sets, bytes_per_agg):
+        for agg in grp_aggs:
+            agg_set_size = 0
+            for smplr in list(grp_sets):
+                if agg_set_size + grp_sets[smplr]['smplr_set_size'] <= bytes_per_agg and grp_sets[smplr]['smplr_set_size'] != 0:
+                    agg_set_size += grp_sets[smplr]['smplr_set_size']
+                    self.aggregators[group][agg]['prdcrs'][smplr] = grp_sets.pop(smplr)
+                else:
+                    for set_ in list(grp_sets[smplr]['sets']):
+                        if agg_set_size + grp_sets[smplr]['sets'][set_] <= bytes_per_agg and grp_sets[smplr]['sets'][set_] != 0:
+                            agg_set_size += grp_sets[smplr]['sets'][set_]
+                            if smplr not in self.aggregators[group][agg]['prdcrs']:
+                                self.aggregators[group][agg]['prdcrs'][smplr] = {}
+                                self.aggregators[group][agg]['prdcrs'][smplr]['sets'] = {}
+                            self.aggregators[group][agg]['prdcrs'][smplr]['sets'][set_] = grp_sets[smplr]['sets'].pop(set_)
+            self.aggregators[group][agg]['agg_set_size'] = agg_set_size
+        return grp_sets
+
+    def get_set_weights(self):
+        '''
+        Check sampler plugins/sets and balance them across aggregators
+
+        Returns (all_sets, dset_size)
+            all_sets  - dict of sets organized by group and producer
+            dset_size - total size of all sets in group in bytes
+        '''
+        all_sets = {}
+        for group in self.producers:
+            # Organize sets by producer group
+            dset_size = 0
+            all_sets[group] = {}
+            all_sets['dset_size'] = dset_size
+            all_sets[group]['prdcrs'] = {}
+            for prdcr in self.producers[group]:
+                rc, dlist = self.comms[self.producers[group][prdcr]['dmn_grp']][self.producers[group][prdcr]['daemon']].dir_list()
+                if rc or dlist is None:
+                # Don't inclue sets in group set count if sampler returns error
+                    continue
+                smplr_set_size = 0
+                all_sets[group]['prdcrs'][self.producers[group][prdcr]['name']] = {}
+                all_sets[group]['prdcrs'][self.producers[group][prdcr]['name']]['sets'] = {}
+                for dset in dlist:
+                    smplr_set_size += dset.data_size
+                    all_sets[group]['prdcrs'][self.producers[group][prdcr]['name']]['sets'][dset.name] = dset.data_size
+                all_sets[group]['prdcrs'][self.producers[group][prdcr]['name']]['smplr_set_size'] = smplr_set_size
+                dset_size += smplr_set_size
+            all_sets[group]['dset_size'] = dset_size
+        return all_sets
+
+    def __rebalance_prdcrs(self, agg_state):
         for group in self.producers:
             grp_prods = list(self.producers[group].keys())
             prod_count = len(grp_prods)
-            grp_aggs = []
-            for agg in self.aggregators[group]:
-                if agg['name'] not in agg_state:
-                    print('Could not connect to {agg["name"]}')
-                    continue
-                elif agg_state[agg['name']] != 'ready':
-                    print(f'{agg["name"]} not in READY state')
-                    continue
-                grp_aggs.append(agg)
+            grp_aggs = self.check_aggs(group, agg_state)
             agg_count = len(grp_aggs)
             if agg_count != 0:
                 prods_per_agg = prod_count // agg_count
@@ -205,26 +288,45 @@ class MaestroMonitor(object):
                 break
             # Assign producers to aggregators
             prod_idx = 0
-            groups[group] = []
             for agg in grp_aggs:
-                agg_prods = []
+                agg_prods = {}
                 for cnt in range(0, prods_per_agg):
-                    agg_prods.append(grp_prods[prod_idx])
+                    agg_prods[grp_prods[prod_idx]] = {}
                     prod_idx += 1
                 if remainder > 0:
-                    agg_prods.append(grp_prods[prod_idx])
+                    agg_prods[grp_prods[prod_idx]] = {}
                     prod_idx += 1
                     remainder -= 1
-                groups[group].append({ "aggregator" : agg, "producers" : agg_prods })
+                self.aggregators[group][agg]['prdcrs'] = agg_prods
 
-        # Add all the producers to the aggregators. Any error here is not an issue
-        # because all aggs have all producers, although, not all producers are started.
-        add_producers(self.comms, self.producers, self.aggregators, self.daemons, agg_state)
+    def __rebalance_sets(self, agg_state):
+        # Build set groups
+        all_sets = self.get_set_weights()
+        for group in self.producers:
+            dset_size = all_sets[group]['dset_size']
+            grp_sets = all_sets[group]['prdcrs']
+            grp_aggs = self.check_aggs(group, agg_state)
+            agg_count = len(grp_aggs)
+            if agg_count != 0:
+                size_per_agg = dset_size // agg_count
+                remainder = dset_size % agg_count
+            else:
+                # None of the aggregators are running
+                break
+            # balance sets across aggregators
+            grp_sets =  self.balance_sets(group, grp_aggs, grp_sets, size_per_agg)
+            remainder = 0
+            if grp_sets:
+                for smplr in grp_sets:
+                    for set_ in grp_sets[smplr]['sets']:
+                        remainder += grp_sets[smplr]['sets'][set_]
+            if remainder > 0:
+                # Balance each remaining set across aggregators
+                remainder = self.balance_remainder(group, grp_aggs, grp_sets, remainder)
 
-        # Add all the updaters and storage policies
-        add_updaters(self.comms, self.updaters, self.aggregators, self.daemons, agg_state)
-        add_stores(self.comms, self.stores, self.aggregators, self.daemons, agg_state)
-
+    def rebalance(self, agg_state):
+        self.reset_conf()
+        # Start samplers if configured with maestro
         cfg_sampler_eps = self.check_samplers()
         if not self.res_samplers:
             if cfg_sampler_eps:
@@ -235,9 +337,19 @@ class MaestroMonitor(object):
                 config_samplers(self.comms, self.samplers, cfg_sampler_eps)
             restart_samplers(self.comms, self.samplers, self.daemons)
             self.res_samplers = False
+
+        self.rebalance_handler[self.args.rebalance](agg_state)
+
+        # Add all the producers to the aggregators. Any error here is not an issue
+        # because all aggs have all producers, although, not all producers are started.
+        add_producers(self.comms, self.producers, self.aggregators, self.daemons, agg_state)
+
+        # Add all the updaters and storage policies
+        add_updaters(self.comms, self.updaters, self.aggregators, self.daemons, agg_state, rb=self.args.rebalance)
+        add_stores(self.comms, self.stores, self.aggregators, self.daemons, agg_state)
         # Start the producers assigned to each of the Aggregators
-        start_producers(self.comms, groups)
-        return groups
+        start_producers(self.comms, self.aggregators, agg_state)
+        return 0
 
     def __etcd_caller(self, event):
         thread = threading.Thread(target=self.__etcd_callback, args=(event.events[0],))
@@ -273,12 +385,20 @@ class MaestroMonitor(object):
                                                       self.__etcd_caller)
         while True:
             ldmsd_state = query_ldmsd_state(self.client, self.comms)
-            for dmn in ldmsd_state:
-                if dmn not in last_state:
+            rebalance_aggs = {}
+            agg_str = ''
+            for group in ldmsd_state:
+                # Updated configuration, do full rebalance
+                if group not in last_state:
                     self.do_rebalance = True
-                elif last_state[dmn].lower() != ldmsd_state[dmn].lower():
-                    self.do_rebalance = True
-                last_state[dmn] = ldmsd_state[dmn]
+                    last_state = ldmsd_state
+                    break
+                for dmn in ldmsd_state[group]:
+                    if dmn not in last_state[group]:
+                        self.do_rebalance = True
+                    elif last_state[group][dmn].lower() != ldmsd_state[group][dmn].lower():
+                        self.do_rebalance = True
+                    last_state[group][dmn] = ldmsd_state[group][dmn]
             if self.do_rebalance:
                 print('Rebalance cluster...')
                 rc = self.rebalance(ldmsd_state)
@@ -295,15 +415,15 @@ def config_samplers(comms, samplers, daemons):
             comm = comms[samplers[smplr_group]['daemons']][smplr]
             err, res = comm.daemon_status()
             if err:
-                print(f"Lost connectivity to {smplr} err {err}")
+                print(f'Lost connectivity to {smplr} err {err}')
                 return False
-            print(f"Adding sampler plugins to sampler {smplr}")
+            print(f'Adding sampler plugins to sampler {smplr}')
             for plugin in samplers[smplr_group]['plugins']:
                 err, rc = comm.plugn_load(plugin['name'])
                 if err == 17:
-                    print(f"File exists: {rc}")
+                    print(f'File exists: {rc}')
                 elif err != 0:
-                    print(f"Error {err} loading plugin {plugin['name']}")
+                    print(f'Error {err} loading plugin {plugin["name"]}')
                     continue
                 # Auto set producer_name/instance_name first,
                 # then overwrite if specfied in config
@@ -313,9 +433,12 @@ def config_samplers(comms, samplers, daemons):
                     if attr == 'name' or attr == 'interval':
                         continue
                     cfg_args[attr] = plugin['config'][attr]
+                # Set component_id to default env variable if not specified
+                if 'component_id' not in plugin['config']:
+                    plugin['config']['component_id'] = '${LDMS_COMPONENT_ID}'
                 err, msg = comm.plugn_config(name=plugin['name'], **cfg_args)
                 if err:
-                    print(f"Error: {err} {msg} configuring {smplr}")
+                    print(f'Error: {err} {msg} configuring {smplr}')
                     continue
     return True
 
@@ -347,7 +470,7 @@ def start_samplers(comms, samplers, daemons):
             comm = comms[samplers[smplr_group]['daemons']][smplr]
             err, res = comm.daemon_status()
             if err:
-                print(f"Lost connectivity to {smplr} err {err}")
+                print(f'Lost connectivity to {smplr} err {err}')
                 return False
             smplrs = comm.smplr_status()
             for plugin in samplers[smplr_group]['plugins']:
@@ -369,7 +492,7 @@ def stop_samplers(comms, samplers, daemons):
             comm = comms[samplers[smplr_group]['daemons']][smplr]
             err, res = comm.daemon_status()
             if err:
-                print(f"Lost connectivity to {smplr} err {err}")
+                print(f'Lost connectivity to {smplr} err {err}')
                 return False
             smplrs = comm.smplr_status()
             for plugn in smplrs[1]:
@@ -392,17 +515,18 @@ def add_listeners(comm, dmn_name, listeners):
     for ep in listeners:
         auth = check_opt('auth', ep)
         auth_opt = check_opt('conf', ep)
+        plugin = check_opt('plugin', ep['auth'])
         if auth != comm.auth:
-            rc, msg = comm.auth_add(auth, auth_opt)
+            rc, msg = comm.auth_add(auth, plugin, auth_opt)
             if rc:
-                print(f'Error adding authentication domain {auth} to sampler {dmn_name}')
+                print(f'Error adding authentication domain {auth} to sampler {dmn_name}: {msg}')
                 if rc == 17:
                     print(f'Authentication domain already exists on sampler {dmn_name}')
                 else:
                     print(f'Error code {rc}: {msg}')
                     print(f'Failed to add listener to {ep["xprt"]}:{ep["port"]}')
                     continue
-        rc, msg = comm.listen(ep['xprt'], ep['port'], auth, auth_opt)
+        rc, msg = comm.listen(ep['xprt'], ep['port'], auth=auth)
         if rc:
             print(f'Error adding listening endpoint {ep["name"]}')
             print(f'Error code {rc}: {msg}')
@@ -424,27 +548,28 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
         prod_dict = producers[grp_name]
         # Query the producer list on each aggregator in the group
         for agg_name, agg_host in agg_hosts(grp_name, aggregators, endpoints):
-            if agg_state[agg_name] != 'ready':
+            if agg_state[grp_name][agg_name] != 'ready':
                 continue
             comm = comms[grp_name][agg_name]
             err, res = comm.prdcr_status()
             if err:
-                print(f"Lost connectivity to {agg_name} err {err}")
+                print(f'Lost connectivity to {agg_name} err {err}')
                 return False
             else:
                 agg_config = set({ prod['name'] for prod in res })
             add_prods = grp_prods - agg_config
             auth = None
             if len(add_prods) > 0:
-                print(f"Adding {len(add_prods)} producers to agg {agg_name}")
+                print(f'Adding {len(add_prods)} producers to agg {agg_name}')
                 ep = next(iter(add_prods))
                 dmn_grp = prod_dict[ep]['dmn_grp']
                 dmn = prod_dict[ep]['daemon']
                 auth = check_opt('auth', endpoints[dmn_grp][dmn]['endpoints'][ep])
                 auth_opt = check_opt('conf', endpoints[dmn_grp][dmn]['endpoints'][ep])
+                plugin = check_opt('plugin', endpoints[dmn_grp][dmn]['endpoints'][ep]['auth'])
 
             if auth is not None:
-                rc, msg = comm.auth_add(auth, auth_opt)
+                rc, msg = comm.auth_add(auth, plugin, auth_opt)
                 if rc:
                     print(f'Error adding authentication domain {auth} to aggregator {agg_name}')
                     print(f'Error code {rc}: {msg}')
@@ -470,42 +595,64 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                         comm.prdcr_subscribe(stream=sub['stream'], regex=regex)
     return True
 
-def add_updaters(comms, updaters, aggregators, daemons, agg_state):
+def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
     """
     Add updaters to Aggregators
     """
     for grp_name in updaters:
         grp_updaters = updaters[grp_name]
+        group = aggregators[grp_name]
+        rc = True
         for updtr_name in grp_updaters:
             updtr = grp_updaters[updtr_name]
             for agg_name, agg_host in agg_hosts(grp_name, aggregators, daemons):
-                if agg_state[agg_name] != 'ready':
+                if agg_state[grp_name][agg_name] != 'ready':
                     continue
+                agg_updtr = updtr_name + '_' + agg_name
                 comm = comms[grp_name][agg_name]
                 # the updater may already exist, in which case the add will fail
                 offset = check_opt('offset', updtr)
+                err, rc = comm.updtr_status()
+                prdcr_updtr_status = json.loads(rc)
+                if prdcr_updtr_status is None:
+                    continue
+                for updtr_ in prdcr_updtr_status:
+                    if updtr_['name'] == agg_updtr and updtr_['state'] == 'RUNNING':
+                        rc, err = comm.updtr_stop(agg_updtr)
+                        if rc:
+                            print(f'Error stopping updater {agg_updtr}: {err}')
+                        rc, err = comm.updtr_del(agg_updtr)
+                        if rc:
+                            print(f'Error removing updater {agg_updtr}: {err}')
                 if 'push' in updtr:
-                    rc, msg = comm.updtr_add(updtr_name, interval=updtr['interval'], offset=offset, push=updtr['push'])
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push=updtr['push'])
                 elif 'auto' in updtr and updtr['auto'] == "True":
-                    rc, msg = comm.updtr_add(updtr_name, interval=updtr['interval'], offset=offset, auto=updtr['auto'])
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, auto=updtr['auto'])
                 else:
-                    rc, msg = comm.updtr_add(updtr_name, interval=updtr['interval'], offset=offset)
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset)
 
                 if rc:
                     if rc != 17:
                         print(f'Error {rc}: {msg} adding updater {updtr_name} to {agg_host["name"]}')
-
                 for regex in updtr['producers']:
-                    comm.updtr_prdcr_add(updtr_name, regex['regex'])
-                for regex in updtr['sets']:
-                    field = check_opt('field', regex)
-                    err, msg = comm.updtr_match_add(updtr_name, regex['regex'], match=field)
-
-                err, msg = comm.updtr_start(updtr_name)
+                    comm.updtr_prdcr_add(agg_updtr, regex['regex'])
+                # Ability for yaml defined set instance matching is removed, as rebalacing is now done
+                # across sets, rather than producers
+                if rb == 'sets':
+                    for prdcr_sets in aggregators[grp_name][agg_name]['prdcrs']:
+                        for _set in aggregators[grp_name][agg_name]['prdcrs'][prdcr_sets]['sets']:
+                            if 'regex' in updtr['sets']:
+                                res = re.match(updtr_['set']['regex'], set_)
+                                if not res:
+                                    continue
+                            err, msg = comm.updtr_match_add(agg_updtr, _set, match='inst')
+                            if err:
+                                print(f'Error {err} : {msg} matching metric set {_set} to {agg_updtr}')
+                err, msg = comm.updtr_start(agg_updtr)
                 if err != 0 and err != errno.EBUSY:
-                    print(f"Error {err} : {msg} starting {updtr_name}")
-                    return False
-    return True
+                    print(f'Error {err} : {msg} starting {updtr_name}')
+                    rc = False
+    return rc
 
 def add_stores(comms, stores, aggregators, daemons, agg_state):
     """
@@ -516,7 +663,7 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
         for store_name in grp_stores:
             store = grp_stores[store_name]
             for agg_name, agg_host in agg_hosts(grp_name, aggregators, daemons):
-                if agg_state[agg_name] != 'ready':
+                if agg_state[grp_name][agg_name] != 'ready':
                     continue
                 comm = comms[grp_name][agg_name]
                 # Load and configure the plugin required by the store
@@ -538,11 +685,11 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
                 # Start the store
                 err, msg = comm.strgp_start(store_name)
                 if err != 0 and err != errno.EBUSY:
-                    print(f"Error {err} : {msg} starting {store_name}")
+                    print(f'Error {err} : {msg} starting {store_name}')
                     return False
     return True
 
-def start_producers(comms, groups):
+def start_producers(comms, groups, agg_state):
     """
     Query each aggregator for its producer status. If it is already
     running leave it alone, if it is running and not in the new group
@@ -550,35 +697,37 @@ def start_producers(comms, groups):
     """
     for grp_name in groups:
         group = groups[grp_name]
-        for grp_agg in group:
-            agg = grp_agg['aggregator']
-            agg_prods = set(grp_agg['producers'])
-            comm = comms[grp_name][grp_agg['aggregator']['name']]
+        for agg in group:
+            if agg_state[grp_name][agg] != 'ready':
+                continue
+            agg_prods = group[agg]['prdcrs'].keys()
+            comm = comms[grp_name][agg]
 
             # get the current state
             err, res = comm.prdcr_status()
             if err:
-                print(f"Error {err} querying state from aggregator {agg['name']}")
+                print(f'Error {err} querying state from aggregator {agg}')
                 continue
-
             start_prods = list(prod['name'] for prod in res \
-                if prod['state'] == 'STOPPED' and prod['name'] in agg_prods)
+                if prod['name'] in agg_prods)
             stop_prods = list(prod['name'] for prod in res \
-                if prod['state'] != 'STOPPED' and prod['name'] not in agg_prods)
-            if len(start_prods) > 0:
-                print(f"Starting agg {agg['name']} {len(start_prods)} producers")
-            for prod_name in start_prods:
-                comm.prdcr_start(prod_name, regex=False)
+                if prod['state'] != 'STOPPED')
             if len(stop_prods) > 0:
-                print(f"Stopping agg {agg['name']} {len(stop_prods)} producers")
+                print(f'Stopping agg {agg} {len(stop_prods)} producers')
             for prod_name in stop_prods:
                 comm.prdcr_stop(prod_name, regex=False)
+            for prod_name in start_prods:
+                comm.prdcr_start(prod_name, regex=False)
+            if len(start_prods) > 0:
+                print(f'Starting agg {agg} {len(start_prods)} producers')
 
 def query_ldmsd_state(client, comms):
     ldmsd_state = {}
     for grp_name in comms:
         group = comms[grp_name]
         for name in group:
+            if grp_name not in ldmsd_state:
+                ldmsd_state[grp_name] = {}
             comm = group[name]
             if comm.state != comm.CONNECTED:
                 comm.close()
@@ -589,7 +738,7 @@ def query_ldmsd_state(client, comms):
                 state = res['state']
             else:
                 state = 'stopped'
-            ldmsd_state[name] = state
+            ldmsd_state[grp_name][name] = state
     return ldmsd_state
 
 if __name__ == "__main__":
@@ -597,6 +746,10 @@ if __name__ == "__main__":
         description="LDMS Monitoring Cluster Manager")
     parser.add_argument("--cluster", metavar="FILE", required=True,
                         help="The name of the etcd cluster configuration file")
+    parser.add_argument("--rebalance", metavar="STRING", required=False, default="producers",
+                        help='Specify "producers" to balance producers across aggregators,\n'\
+                             'or "sets" to balance metric sets across aggregators.\n'\
+                             'Defaults to "producers"')
     parser.add_argument("--dump", action="store_true",
                         help="Dump the load-balanced aggregation configuration files")
     parser.add_argument("--prefix", metavar="STRING", required=True,
