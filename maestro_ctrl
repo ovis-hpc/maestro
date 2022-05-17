@@ -165,8 +165,7 @@ class Cluster(object):
             if daemons_ is None:
                 raise ValueError(f"No daemons matched matched daemon key {group}")
             for eps in daemons_['endpoints']:
-                if eps['maestro_comm'] is True:
-                    endpoints += expand_names(eps['names'])
+                endpoints += expand_names(eps['names'])
             if group not in aggregators:
                 aggregators[group] = []
             for name in names:
