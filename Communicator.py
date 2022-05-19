@@ -134,17 +134,6 @@ class Communicator(object):
     def getPort(self):
         return self.port
 
-    def args_to_cfg_str(self, **args):
-        """Convert python arguments to ldmsd readable string"""
-        cfg_str = ''
-        for key in args:
-            if args[key] is None:
-                continue
-            if len(cfg_str):
-                cfg_str += ' '
-            cfg_str += key + '=' + str(args[key])
-        return cfg_str
-
     def send_command(self, cmd):
         """This is called by the LDMSRequest class to send a message"""
         if self.state != self.CONNECTED:
@@ -250,7 +239,7 @@ class Communicator(object):
         except Exception:
             return errno.ENOTCONN, None
 
-    def plugn_config(self, name, **args):
+    def plugn_config(self, name, cfg_str):
         """
         Configure an LDMSD plugin
 
@@ -260,11 +249,6 @@ class Communicator(object):
         Keyword Parameters:
         - dictionary of plugin specific key/value pairs
         """
-        cfg_str = ''
-        for key in args:
-            if len(cfg_str):
-                cfg_str += ' '
-            cfg_str += key + '=' + args[key]
         req = LDMSD_Request(
                 command_id=LDMSD_Request.PLUGN_CONFIG,
                 attrs=[ LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name),

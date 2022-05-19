@@ -69,13 +69,13 @@ class MaestroMonitor(object):
             self.stores = {}
 
     def set_aggs(self):
-        self.aggregators = {}
         if 'aggregators' in self.config[self.prefix]:
-            for group in self.config[self.prefix]['aggregators']:
-                self.aggregators[group] = {}
-                for agg in self.config[self.prefix]['aggregators'][group]:
-                    self.aggregators[group][agg['name']] = agg
-                    self.aggregators[group][agg['name']]['prdcrs'] = {}
+            self.aggregators = self.config[self.prefix]['aggregators']
+            for group in self.aggregators:
+                for agg in self.aggregators[group]:
+                    self.aggregators[group][agg]['prdcrs'] = {}
+        else:
+            self.aggregators = {}
 
     def set_samplers(self):
         if 'samplers' in self.config[self.prefix]:
@@ -425,18 +425,18 @@ def config_samplers(comms, samplers, daemons):
                 elif err != 0:
                     print(f'Error {err} loading plugin {plugin["name"]}')
                     continue
-                # Auto set producer_name/instance_name first,
+                # Auto set producer_name/instance/component_id to default,
                 # then overwrite if specfied in config
-                cfg_args = { "producer"  : smplr,
-                             "instance"  : smplr +'/'+plugin['name'] }
+                cfg_args = { 'producer'     : smplr,
+                             'instance'     : smplr +'/'+plugin['name'],
+                             'component_id' : '${LDMS_COMPONENT_ID}' }
                 for attr in plugin['config']:
                     if attr == 'name' or attr == 'interval':
                         continue
                     cfg_args[attr] = plugin['config'][attr]
                 # Set component_id to default env variable if not specified
-                if 'component_id' not in plugin['config']:
-                    plugin['config']['component_id'] = '${LDMS_COMPONENT_ID}'
-                err, msg = comm.plugn_config(name=plugin['name'], **cfg_args)
+                cfg_str = parse_to_cfg_str(cfg_args)
+                err, msg = comm.plugn_config(plugin['name'], cfg_str)
                 if err:
                     print(f'Error: {err} {msg} configuring {smplr}')
                     continue
@@ -568,6 +568,16 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                 auth_opt = check_opt('conf', endpoints[dmn_grp][dmn]['endpoints'][ep])
                 plugin = check_opt('plugin', endpoints[dmn_grp][dmn]['endpoints'][ep]['auth'])
 
+            subscribe = check_opt('subscribe', aggregators[grp_name][agg_name])
+            if subscribe is not None:
+                for stream in subscribe:
+                    if 'regex' in stream:
+                        regex = stream['regex']
+                    else:
+                        regex = '.*'
+                    rc, err = comm.prdcr_subscribe(stream=stream['stream'], regex=regex)
+                    if rc:
+                        print(f'Error {rc} subscribing to stream {stream["stream"]}: {err}.')
             if auth is not None:
                 rc, msg = comm.auth_add(auth, plugin, auth_opt)
                 if rc:
@@ -586,13 +596,6 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                             prod_name, prod['type'],
                             endpoint['xprt'], endpoint['addr'], endpoint['port'],
                             prod['reconnect'], auth=auth)
-                if 'subscribe' in prod:
-                    for sub in prod['subscribe']:
-                        if 'regex' in sub:
-                            regex = sub['regex']
-                        else:
-                            regex = '.*'
-                        comm.prdcr_subscribe(stream=sub['stream'], regex=regex)
     return True
 
 def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
@@ -669,9 +672,9 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
                 # Load and configure the plugin required by the store
                 plugin = store['plugin']
                 plugin_name = plugin['name']
-                plugin_config = plugin['config']
+                cfg_str = parse_to_cfg_str(plugin['config'])
                 err, res = comm.plugn_load(plugin_name)
-                err, res = comm.plugn_config(plugin_name, **plugin_config)
+                err, res = comm.plugn_config(plugin_name, cfg_str)
                 flush = check_opt('flush', store)
                 ## the stores may already exist, in which case the add will fail
                 err, res = comm.strgp_add(store_name,

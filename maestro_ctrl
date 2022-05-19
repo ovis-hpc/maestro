@@ -157,25 +157,22 @@ class Cluster(object):
                            agg_spec, "aggregator specification")
             names = expand_names(agg_spec['daemons'])
             group = agg_spec['daemons']
-            endpoints = []
+            plugins = check_opt('plugins', agg_spec)
             daemons_ = None
             for daemons in config['daemons']:
                 if group == daemons['names']:
                     daemons_ = daemons
             if daemons_ is None:
                 raise ValueError(f"No daemons matched matched daemon key {group}")
-            for eps in daemons_['endpoints']:
-                if eps['maestro_comm'] is True:
-                    endpoints += expand_names(eps['names'])
             if group not in aggregators:
-                aggregators[group] = []
+                aggregators[group] = {}
+            subscribe = check_opt('subscribe', agg_spec)
             for name in names:
-                endpoint = endpoints.pop(0)
-                agg = {
-                        'name'      : name,
-                        'state'     : 'stopped' # 'running', 'error'
-                }
-                aggregators[group].append(agg)
+                aggregators[group][name] = { 'state' : 'stopped' } # 'running', 'error'
+                if subscribe:
+                    aggregators[group][name]['subscribe'] = subscribe
+                if plugins:
+                    aggregators[group][name]['plugins'] = plugins
         return aggregators
 
     def build_producers(self, config):
@@ -200,7 +197,6 @@ class Cluster(object):
                 if group not in producers:
                     producers[group] = {}
 
-                subscribe = check_opt('subscribe', prod)
                 if len(names) != len(endpoints):
                     raise ValueError('"producer": The "host" and "name" specifications must '
                                      '            expand to the same number of strings')
@@ -221,8 +217,6 @@ class Cluster(object):
                         'reconnect' : reconnect,
                         'updaters'  : upd_spec
                     }
-                    if subscribe:
-                        prod['subscribe'] = subscribe
                     producers[group][endpoint] = prod
         return producers
 
@@ -377,9 +371,10 @@ class Cluster(object):
                     auth = check_opt('auth', ep)
                     auth_opt = check_opt('conf', ep)
                     if auth:
-                        fd.write(f'auth_add')
-                        self.write_opt_attr(fd, 'name', auth, endline=False)
-                        self.write_opt_attr(fd, 'conf', auth_opt, endline=True)
+                        plugin = check_opt('plugin', ep['auth'])
+                        fd.write(f'auth_add name={auth}')
+                        self.write_opt_attr(fd, 'plugin', plugin, endline=False)
+                        self.write_opt_attr(fd, 'conf', auth_opt)
                     fd.write(f'listen xprt={ep["xprt"]} port={ep["port"]}')
                     self.write_opt_attr(fd, 'auth', auth, endline=False)
                     self.write_opt_attr(fd, 'conf', auth_opt)
@@ -397,7 +392,7 @@ class Cluster(object):
         if group_name in self.producers:
             ''' Balance samplers across aggregators '''
             prdcrs = []
-            loop = round(len(self.producers[group_name]) / len(self.aggregators[group_name]))
+            loop = round(len(self.producers[group_name]) / len(self.aggregators[group_name].keys()))
             last_sampler = None
             for prdcr in self.producers[group_name]:
                 prdcrs.append(prdcr)
@@ -418,7 +413,12 @@ class Cluster(object):
                 else:
                     auths[auth] = { 'conf' : auth_opt }
             for auth in auths:
-                fd.write(f'auth_add name={auth}')
+                plugin = check_opt('plugin', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['auth'])
+                if plugin is None:
+                    print(f'Please specify auth plugin type for producer "{producer["daemon"]}" with auth name "{auth}"\n'\
+                           'configuration file generation will continue, but auth will likely be denied.\n')
+                    plugin = auth
+                fd.write(f'auth_add name={auth} plugin={plugin}')
                 self.write_opt_attr(fd, 'conf', auths[auth]['conf'])
             for ep in prod_group:
                 if i >= loop:
@@ -429,12 +429,16 @@ class Cluster(object):
                 port = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['port']
                 xprt = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['xprt']
                 hostname = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['addr']
+                auth = check_opt('auth', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
                 ptype = producer['type']
                 interval = producer['reconnect']
                 fd.write(f'prdcr_add name={pname} '+
                          f'host={hostname} '+
                          f'port={port} '+
-                         f'xprt={xprt} type={ptype} interval={interval}\n')
+                         f'xprt={xprt} '+
+                         f'type={ptype} '+
+                         f'interval={interval}')
+                self.write_opt_attr(fd, 'auth', auth)
                 last_sampler = pname
                 i += 1
                 if 'regex' in producer:
@@ -445,13 +449,19 @@ class Cluster(object):
 
     def write_samplers(self, fd, smplr_group):
         for sampler in self.samplers[smplr_group]['plugins']:
-            cfg_str = parse_to_cfg_str(sampler['config'])
+            cfg_args = { 'producer'     : '${HOSTNAME}',
+                         'instance'     : '${HOSTNAME}' +'/'+sampler['name'],
+                         'component_id' : '${LDMS_COMPONENT_ID}' }
+            for attr in sampler['config']:
+                if attr == 'name' or attr == 'interval':
+                    continue
+                cfg_args[attr] = sampler['config'][attr]
+
             sname = sampler['name']
+            cfg_str = parse_to_cfg_str(cfg_args)
             interval = cvt_intrvl_str_to_us(sampler['interval'])
             fd.write(f'load name={sname}\n')
-            fd.write(f'config {cfg_str} producer=${{HOSTNAME}} '+
-                     f'component_id=${{COMPONENT_ID}} '+
-                     f'instance=${{HOSTNAME}}/{sname}\n')
+            fd.write(f'config name={sname} {cfg_str}\n')
             fd.write(f'start name={sname} interval={interval}')
             offset = check_opt('offset', sampler)
             self.write_opt_attr(fd, 'offset', offset)
@@ -466,22 +476,24 @@ class Cluster(object):
                     fd.write(f'config name={plugin} {cfg_str}\n\n')
                 fd.close()
 
-    def write_agg_plugins(self, fd, group_name):
+    def write_stream_subscribe(self, fd, group_name, agg):
+        subscribe = check_opt('subscribe', self.aggregators[group_name][agg])
+        if subscribe:
+            for stream in subscribe:
+                regex = check_opt('regex', stream)
+                if 'regex' is None:
+                    regex = '.*'
+                fd.write(f'prdcr_subscribe stream={stream["stream"]} '\
+                         f'regex={regex}\n')
+
+    def write_agg_plugins(self, fd, group_name, agg):
         # Write independent plugin configuration for group <group_name>
-        if self.plugins != None:
-            if group_name in self.plugins:
-                for plugin in self.plugins[group_name]:
-                    cfg_str = parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
-                    if 'stream' in self.plugins[group_name][plugin]['config']:
-                        if 'regex' in self.plugins[group_name][plugin]['config']:
-                            regex = self.plugins[group_name][plugin]['config']
-                            fd.write(f'prdcr_subscribe stream={self.plugins[group_name][plugin]["config"]["stream"]} '\
-                                     f'regex={regex}\n')
-                        else:
-                            fd.write(f'prdcr_subscribe stream={self.plugins[group_name][plugin]["config"]["stream"]} '\
-                                     f'regex=.*\n')
-                    fd.write(f'load name={plugin}\n')
-                    fd.write(f'config name={plugin} {cfg_str}\n\n')
+        plugins = check_opt('plugins', self.aggregators[group_name][agg])
+        if plugins is not None:
+            for plugin in plugins:
+                cfg_str = parse_to_cfg_str(plugin['config'])
+                fd.write(f'load name={plugin["name"]}\n')
+                fd.write(f'config name={plugin["name"]} {cfg_str}\n\n')
 
     def write_updaters(self, fd, group_name):
         if group_name in self.updaters:
@@ -557,10 +569,11 @@ class Cluster(object):
                     continue
                 last_sampler = None
                 for agg in self.aggregators[group_name]:
-                    fd = open(f'{path}/{group_name}-{agg["name"]}.conf', 'w+')
+                    fd = open(f'{path}/{agg}.conf', 'w+')
                     self.write_listeners(fd, group_name)
                     self.write_producers(fd, group_name)
-                    self.write_agg_plugins(fd, group_name)
+                    self.write_stream_subscribe(fd, group_name, agg)
+                    self.write_agg_plugins(fd, group_name, agg)
                     self.write_updaters(fd, group_name)
                     self.write_stores(fd, group_name)
             except Exception as e:
