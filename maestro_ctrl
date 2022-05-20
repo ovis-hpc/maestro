@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#! /usr/bin/env python3
 import os, sys
 import errno
 import yaml
@@ -6,6 +6,7 @@ import argparse
 import etcd3
 import json
 import time
+import copy
 from collections import Mapping, Sequence
 from maestro_util import *
 
@@ -15,6 +16,55 @@ class Cluster(object):
             res = client.put(path, str(value))
         except Exception as e:
             print("Error {0} setting {1} : {2}".format(str(e), path, str(value)))
+
+    def walk_tilde(self, obj, subs=None, debug=False, depth=0):
+        """Walk the obj given and apply ~{} string replacement in place.
+           In scalar values, ~{var} is replaced by its value if
+           var is the name of scalar value at the same or higher scope.
+           This provides us the ability to say:
+           cluster: foo
+             plugins:
+               - name: bar
+                 instance: ~{cluster}/${HOSTNAME}/~{name}
+           which is not a feature of yaml or json.
+           Needed since yaml anchors do not substitute within strings
+           or substitute in a nearest nested scope sense.
+        """
+        if not subs:
+            subs = TildeSubs()
+            subs.expand_anchor(obj, {}, debug)
+        debug = False
+        if isinstance(obj, (int, float, bool, str)):
+            if debug:
+                print(obj)
+            return
+        if isinstance(obj, Sequence):
+            i = 0
+            for v in obj:
+                if debug:
+                    print("depth {}: list[{}]".format(depth, i))
+                self.walk_tilde(v, subs=subs, debug=debug, depth=depth+1)
+                if isinstance(v, str):
+                    changed = True
+                    newval = v
+                    while changed:
+                        (changed, newval) = subs.expand_val(newval, debug)
+                    if newval != v:
+                        obj[i] = newval
+                i += 1
+        if isinstance(obj, Mapping):
+            subs.push(obj)
+            for (key, value) in obj.items():
+                if debug:
+                    print("depth {}: map[{}]".format(depth, key))
+                self.walk_tilde(value, subs=subs, debug=debug, depth=depth+1)
+            changed = True
+            while changed:
+                changed = False
+                for (key, value) in obj.items():
+                    if isinstance(value, str):
+                        changed = changed or subs.expand_key(key, debug)
+            subs.pop()
 
     def check_key(self, key):
         # Handle forward slash in keys e.g. endpoints containing "/" in the name
@@ -341,13 +391,17 @@ class Cluster(object):
         self.client = client
         self.name = name
         self.cluster_config = cluster_config
-        self.daemons = self.build_daemons(cluster_config)
-        self.aggregators = self.build_aggregators(cluster_config)
-        self.producers = self.build_producers(cluster_config)
-        self.updaters = self.build_updaters(cluster_config)
-        self.stores = self.build_stores(cluster_config)
-        self.samplers = self.build_samplers(cluster_config)
-        self.plugins = self.build_plugins(cluster_config)
+        # keep a config copy in case we want an unsubst round-trip
+        self.cluster_config_raw = copy.deepcopy(cluster_config)
+        # tilde-expand self.cluster_config in place
+        self.walk_tilde(self.cluster_config, debug=False)
+        self.daemons = self.build_daemons(self.cluster_config)
+        self.aggregators = self.build_aggregators(self.cluster_config)
+        self.producers = self.build_producers(self.cluster_config)
+        self.updaters = self.build_updaters(self.cluster_config)
+        self.stores = self.build_stores(self.cluster_config)
+        self.samplers = self.build_samplers(self.cluster_config)
+        self.plugins = self.build_plugins(self.cluster_config)
 
     def commit(self):
         pass
