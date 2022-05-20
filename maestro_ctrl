@@ -175,6 +175,9 @@ class Cluster(object):
                         'name'      : name,
                         'state'     : 'stopped' # 'running', 'error'
                 }
+                for k in ["file", "prolog", "epilog"]:
+                    if k in agg_spec:
+                        agg[k] = agg_spec[k]
                 aggregators[group].append(agg)
         return aggregators
 
@@ -535,13 +538,22 @@ class Cluster(object):
             # Sampler config
             if self.samplers != None:
                 try:
-                    self.write_sampler_plugins(self)
+                    self.write_sampler_plugins(group_name)
                     # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
                     if group_name in self.samplers:
-                        fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
+                        # provide output file name specification if optionally specified
+                        if 'file' in self.samplers[group_name]:
+                            fd = open(f'{path}/{self.samplers[group_name]["file"]}.conf', 'w+')
+                        else:
+                            fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
+                        fd.write(f'# from samplers: {{- daemons: {group_name}\n')
+                        # include prolog and epilog so all things are easily done in maestro
+                        if 'prolog' in self.samplers[group_name]:
+                            fd.write(f'# prolog\n{self.samplers[group_name]["prolog"]}\n')
                         self.write_samplers(fd, group_name)
                         self.write_listeners(fd, group_name)
-                    if fd:
+                        if 'epilog' in self.samplers[group_name]:
+                            fd.write(f'# epilog\n{self.samplers[group_name]["epilog"]}\n')
                         fd.close()
                 except Exception as e:
                     a, b, d = sys.exc_info()
@@ -557,12 +569,22 @@ class Cluster(object):
                     continue
                 last_sampler = None
                 for agg in self.aggregators[group_name]:
-                    fd = open(f'{path}/{group_name}-{agg["name"]}.conf', 'w+')
+                    # provide output file name specification if optionally specified
+                    if 'file' in agg:
+                        fd = open(f'{path}/{agg["file"]}.conf', 'w+')
+                    else:
+                        fd = open(f'{path}/{group_name}-{agg["name"]}.conf', 'w+')
+                    fd.write(f'# from aggregators: {{- daemons: {group_name} {agg["name"]}\n')
+                    # include prolog and epilog so all things are easily done in maestro
+                    if 'prolog' in agg:
+                        fd.write(f'# prolog\n{agg["prolog"]}\n')
                     self.write_listeners(fd, group_name)
                     self.write_producers(fd, group_name)
                     self.write_agg_plugins(fd, group_name)
                     self.write_updaters(fd, group_name)
                     self.write_stores(fd, group_name)
+                    if 'epilog' in agg:
+                        fd.write(f'# epilog\n{agg["epilog"]}\n')
             except Exception as e:
                 ea, eb, ec = sys.exc_info()
                 print('Agg config Error: '+str(e)+' Line:'+str(ec.tb_lineno))
@@ -606,7 +628,6 @@ if __name__ == "__main__":
     client = etcd3.client(host=etcd_hosts[0][0], port=etcd_hosts[0][1],
         grpc_options=[ ('grpc.max_send_message_length',16*1024*1024),
                        ('grpc.max_receive_message_length',16*1024*1024)])
-
     cluster = Cluster(client, args.prefix, conf_spec)
     if args.generate_config_path:
         cluster.config_v4(args.generate_config_path)
