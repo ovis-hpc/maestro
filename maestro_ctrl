@@ -208,22 +208,31 @@ class Cluster(object):
                 # Expand and generate all the producers
                 typ = prod['type']
                 reconnect = cvt_intrvl_str_to_us(prod['reconnect'])
-                for name in names:
-                    smplr_dmn = smplr_dmns.pop(0)
-                    endpoint = endpoints.pop(0)
-                    prod = {
-                        'daemon'    : smplr_dmn,
-                        'dmn_grp'   : daemons,
-                        'name'      : name,
-                        'endpoint'  : endpoint,
-                        'type'      : typ,
-                        'group'     : group,
-                        'reconnect' : reconnect,
-                        'updaters'  : upd_spec
-                    }
-                    if subscribe:
-                        prod['subscribe'] = subscribe
-                    producers[group][endpoint] = prod
+                ports_per_dmn = len(endpoints) / len(smplr_dmns)
+                ppd = ports_per_dmn
+                try:
+                    for name in names:
+                        if ppd >= 0:
+                            smplr_dmn = smplr_dmns[0]
+                            ppd -= 1
+                        else:
+                            smplr_dmn = smplr_dmns.pop(0)
+                            ppd = ports_per_dmn
+                        endpoint = endpoints.pop(0)
+                        prod = {
+                            'daemon'    : smplr_dmn,
+                            'dmn_grp'   : daemons,
+                            'name'      : name,
+                            'endpoint'  : endpoint,
+                            'type'      : typ,
+                            'group'     : group,
+                            'reconnect' : reconnect,
+                            'updaters'  : upd_spec
+                        }
+                        producers[group][endpoint] = prod
+                except:
+                    print(f'Error building producer config:\n'\
+                          f'Please ensure "endpoints" is configured to the correct number of ports specified.')
         return producers
 
     def build_updaters(self, config):
