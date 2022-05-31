@@ -1,5 +1,9 @@
 import collections
+from collections import Mapping, Sequence
 import hostlist
+import yaml
+import re
+import copy
 
 AUTH_ATTRS = [
     'auth',
@@ -139,3 +143,87 @@ def parse_yaml_bool(bool_):
         return True
     else:
         return False
+
+# tilde substitution implementation
+class TildeSubs(object):
+    """manage a stack of dicts for ~{} expansion"""
+    def __init__(self):
+        self.stack = []
+        self.push(dict())
+        self.re = re.compile(r'~\{[^~{}]+\}')
+    def push(self, d):
+        """stash current dict."""
+        self.stack.append(d)
+    def pop(self):
+        del self.stack[-1]
+    def get_val(self, key, debug=False):
+        """reverse search on stack for closest value of the key.
+           If nothing is found, returns False.
+           If empty string is found, returns None."""
+        if debug:
+            print("stack depth {},".format(len(self.stack)))
+        for i in range(len(self.stack) -1, -1, -1):
+            if debug:
+                print("stack {}, ".format(i))
+            if key in self.stack[i]:
+                return self.stack[i][key]
+        return False
+    def expand_val(self, val, debug=False):
+        """ DFBU substitution on a string. Returns (changed, newval)"""
+        if debug:
+            print("searching value: {}\n".format(val))
+        newval = ""
+        last = 0
+        changed = False
+        for m in self.re.finditer(val):
+            newval += val[last:m.start()]
+            last = m.end()
+            var = m.string[m.start():m.end()][2:-1]
+            if debug:
+                print("containing: {} -".format(var))
+            s = self.get_val(var, debug=debug)
+            if s:
+                changed = True
+                newval += str(s)
+                if debug:
+                    print("replaced with: {}\n".format(s))
+            else:
+                if not isinstance(s, bool):
+                    changed = True
+                    if debug:
+                        print("empty replace: {}\n".format(var))
+                else:
+                    if debug:
+                        print("undefined: {}\n".format(var))
+        newval += val[last:]
+        return (changed, newval)
+    def expand_key(self, key, debug=False):
+        """ DFBU substitution on a key in deepest current dict"""
+        if debug:
+            print("checking: {} - ".format(key))
+        val = self.stack[-1][key]
+        (changed, newval) = self.expand_val(val, debug)
+        if changed:
+            if debug:
+                print("key updated: {} : {}\n".format(key, newval))
+            self.stack[-1][key] = newval
+        return changed
+    def expand_anchor(self, obj, subs=None, debug=False, depth=0):
+        """ replace map references from anchors with deep copies """
+        if isinstance(obj, (int, float, bool, str)):
+            return
+        if isinstance(obj, Sequence):
+            i = 0
+            for v in obj:
+                if not id(v) in subs:
+                    subs[id] = v
+                self.expand_anchor(v, subs=subs, debug=debug, depth=depth+1)
+                i += 1
+        if isinstance(obj, Mapping):
+            for (key, value) in obj.items():
+                if id(value) in subs and not isinstance(value, (int, float, bool, str)):
+                    obj[key] = copy.deepcopy(value)
+                else:
+                    subs[id(value)] = value
+                self.expand_anchor(obj[key], subs=subs, debug=debug, depth=depth+1)
+
