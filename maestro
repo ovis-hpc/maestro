@@ -616,9 +616,9 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                 # the updater may already exist, in which case the add will fail
                 offset = check_opt('offset', updtr)
                 err, rc = comm.updtr_status()
-                prdcr_updtr_status = json.loads(rc)
-                if prdcr_updtr_status is None:
+                if rc is None:
                     continue
+                prdcr_updtr_status = json.loads(rc)
                 for updtr_ in prdcr_updtr_status:
                     if updtr_['name'] == agg_updtr and updtr_['state'] == 'RUNNING':
                         rc, err = comm.updtr_stop(agg_updtr)
