@@ -181,7 +181,7 @@ class Cluster(object):
         entry is a list of producers in that group.
         """
         producers = {}
-        for agg in config['aggregators']:
+        for agg in config.get('aggregators', []):
             if 'peers' not in agg:
                 continue
             for prod in agg['peers']:
@@ -238,7 +238,7 @@ class Cluster(object):
         """
         updaters = {}
         updtr_cnt = 0
-        for agg in config['aggregators']:
+        for agg in config.get('aggregators', []):
             if 'peers' not in agg:
                 continue
             for prod in agg['peers']:
