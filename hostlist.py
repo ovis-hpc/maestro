@@ -69,7 +69,8 @@ def expand_hostlist(hostlist, allow_duplicates=False, sort=False):
     results = []
     bracket_level = 0
     part = ""
-    
+    if type(hostlist) in [int, float]:
+        hostlist = str(hostlist)
     for c in hostlist + ",":
         if c == "," and bracket_level == 0:
             # Comma at top level, split!
