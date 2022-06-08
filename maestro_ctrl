@@ -208,7 +208,7 @@ class Cluster(object):
                 ppd = ports_per_dmn
                 try:
                     for name in names:
-                        if ppd >= 0:
+                        if ppd > 1:
                             smplr_dmn = smplr_dmns[0]
                             ppd -= 1
                         else:
