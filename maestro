@@ -387,6 +387,7 @@ class MaestroMonitor(object):
             ldmsd_state = query_ldmsd_state(self.client, self.comms)
             rebalance_aggs = {}
             agg_str = ''
+            self.lock.acquire() # protects self.do_rebalance and self.conf
             for group in ldmsd_state:
                 # Updated configuration, do full rebalance
                 if group not in last_state:
@@ -404,6 +405,7 @@ class MaestroMonitor(object):
                 rc = self.rebalance(ldmsd_state)
                 self.do_rebalance = False
                 print('Finished load balancing.')
+            self.lock.release()
             time.sleep(1)
 
 def config_samplers(comms, samplers, daemons):
