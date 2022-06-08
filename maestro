@@ -56,17 +56,10 @@ class MaestroMonitor(object):
         """
         self.daemons = self.config[self.prefix]['daemons']
         self.set_samplers()
-        if 'producers' in self.config[self.prefix]:
-            self.producers = self.config[self.prefix]['producers']
-        else:
-            self.producers = {}
-        self.producers = self.config[self.prefix]['producers']
+        self.producers = self.config[self.prefix].get('producers', dict())
         self.set_aggs()
-        self.updaters = self.config[self.prefix]['updaters']
-        if 'stores' in self.config[self.prefix]:
-            self.stores = self.config[self.prefix]['stores']
-        else:
-            self.stores = {}
+        self.updaters = self.config[self.prefix].get('updaters', dict())
+        self.stores = self.config[self.prefix].get('stores', dict())
 
     def set_aggs(self):
         if 'aggregators' in self.config[self.prefix]:
@@ -602,10 +595,10 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
     """
     Add updaters to Aggregators
     """
+    rc = True
     for grp_name in updaters:
         grp_updaters = updaters[grp_name]
         group = aggregators[grp_name]
-        rc = True
         for updtr_name in grp_updaters:
             updtr = grp_updaters[updtr_name]
             for agg_name, agg_host in agg_hosts(grp_name, aggregators, daemons):
