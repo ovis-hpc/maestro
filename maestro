@@ -16,12 +16,14 @@ def agg_hosts(grp_name, aggs, daemons):
     return [ [ dmn, daemons[grp_name][dmn]['endpoints'][ep]] for dmn in aggs[grp_name] for ep in daemons[grp_name][dmn]['endpoints'] if 'maestro_comm' in daemons[grp_name][dmn]['endpoints'][ep] ]
 
 class MaestroMonitor(object):
-    def __init__(self, prefix, config, args):
+    def __init__(self, spec, args):
         self.prefix = args.prefix
         if self.prefix[0] == '/':
-            self.prefix = prefix[1:]
+            self.prefix = self.prefix[1:]
         # Use the 1st etcd host for now
-        self.client = etcd3.client(host=etcd_hosts[0][0], port=etcd_hosts[0][1],
+        etcd_host = spec['members'][0]['host']
+        etcd_port = spec['members'][0]['port']
+        self.client = etcd3.client(host=etcd_host, port=etcd_port,
                                    grpc_options=[ ('grpc.max_send_message_length',16*1024*1024),
                                                   ('grpc.max_receive_message_length',16*1024*1024)])
         self.config = self.load_config()
@@ -30,7 +32,6 @@ class MaestroMonitor(object):
             print(f'"rebalance" parameter must be assigned to either "sets" or "producers"\n'\
                    'If no argument is specified, maestro will balance across producers by default')
             sys.exit(1)
-        self.json_config = json.dumps(config)
         self.do_rebalance = False
         self.res_samplers = False
         self.reset_conf()
@@ -774,12 +775,8 @@ if __name__ == "__main__":
 
     # All keys in the DB are prefixed with the cluster name, 'pfx'. So we can
     # have multiple monitoring hosted by the same consensus cluster.
-    pfx = etcd_spec['cluster']
-    etcd_hosts = ()
-    for h in etcd_spec['members']:
-        etcd_hosts += (( h['host'], h['port'] ),)
 
-    maestro = MaestroMonitor(args.prefix, etcd_hosts, args)
+    maestro = MaestroMonitor(etcd_spec, args)
 
     # At each load-balance group level the aggregators have all
     # producers; however, only the producers assigned to each
