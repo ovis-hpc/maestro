@@ -352,9 +352,7 @@ class MaestroMonitor(object):
         return 0
 
     def __etcd_caller(self, event):
-        thread = threading.Thread(target=self.__etcd_callback, args=(event.events[0],))
-        thread.start()
-        thread.join()
+        self.__etcd_callback(event.events[0])
 
     def __etcd_callback(self, event):
         try:
