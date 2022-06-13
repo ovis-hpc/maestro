@@ -9,6 +9,7 @@ import json
 import threading, queue
 import time
 import re
+import socket
 import logging
 from Communicator import Communicator
 from maestro_util import *
@@ -19,14 +20,47 @@ def agg_hosts(grp_name, aggs, daemons):
 class MaestroMonitor(object):
     def __init__(self, spec, args):
         self.prefix = args.prefix
+        self.lock = threading.Lock()
         if self.prefix[0] == '/':
             self.prefix = self.prefix[1:]
+        self.spec = spec
         # Use the 1st etcd host for now
         etcd_host = spec['members'][0]['host']
         etcd_port = spec['members'][0]['port']
         self.client = etcd3.client(host=etcd_host, port=etcd_port,
                                    grpc_options=[ ('grpc.max_send_message_length',16*1024*1024),
                                                   ('grpc.max_receive_message_length',16*1024*1024)])
+        self.syncobj_cond = None
+        self.syncobj = None
+        self.maestro_members = spec.get('maestro_members')
+        if self.maestro_members:
+            # maestros on RAFT
+            from pysyncobj import SyncObj, SyncObjConf
+            self.syncobj_cond = threading.Condition(self.lock)
+            myhost = socket.gethostname()
+            # sort members by host
+            self.maestro_members.sort(key = lambda m: m['host'])
+            # Check host uniqueness
+            myaddr = None
+            otheraddrs = list()
+            prev_host = None
+            for m in self.maestro_members:
+                # sorted by host
+                host = m['host']
+                port = m['port']
+                if host == prev_host:
+                    raise RuntimeError(f'{host} appeared more than one time'
+                                        ' in the maestro_members list')
+                if host == myhost:
+                    myaddr = f"{host}:{port}"
+                else:
+                    otheraddrs.append(f"{host}:{port}")
+                prev_host = host
+            if not myaddr:
+                raise RuntimeError(f'`{myhost}` is not in the maestro_members list')
+            syncobjconf = SyncObjConf()
+            syncobjconf.onStateChanged = self.on_syncobj_state_changed
+            self.syncobj = SyncObj(myaddr, otheraddrs, conf=syncobjconf)
         self.config = self.load_config()
         self.args = args
         if self.args.rebalance != 'sets' and self.args.rebalance != 'producers':
@@ -51,6 +85,13 @@ class MaestroMonitor(object):
             'producers' : self.__rebalance_prdcrs,
             'sets'      : self.__rebalance_sets
         }
+
+    def on_syncobj_state_changed(self, old_state, new_state):
+        self.lock.acquire()
+        log.info(f"syncobj state changed {raft_state_str(old_state)} =>"
+                 f" {raft_state_str(new_state)}")
+        self.syncobj_cond.notify()
+        self.lock.release()
 
     def reset_conf(self):
         """
@@ -380,14 +421,20 @@ class MaestroMonitor(object):
     def cluster_monitor(self):
         last_state = {}
         pfx = '/'+self.prefix
-        self.lock = threading.Lock()
         self.chng_id = self.client.add_watch_callback(pfx+'/last_updated',
                                                       self.__etcd_caller)
         while True:
+            self.lock.acquire() # protects self.do_rebalance and self.conf
+            if self.syncobj:
+                # maestros on RAFT, only act if we are the leader
+                while not self.syncobj._isLeader():
+                    self.syncobj_cond.wait()
+                    # NOTE: cond.wait() releases self.lock and blocking waits.
+                    #       self.lock is re-acquired when cond.wait() returns.
+
             ldmsd_state = query_ldmsd_state(self.client, self.comms)
             rebalance_aggs = {}
             agg_str = ''
-            self.lock.acquire() # protects self.do_rebalance and self.conf
             for group in ldmsd_state:
                 # Updated configuration, do full rebalance
                 if group not in last_state:
@@ -746,6 +793,15 @@ def query_ldmsd_state(client, comms):
             ldmsd_state[grp_name][name] = state
     return ldmsd_state
 
+RAFT_STATE_TBL = {
+        0: "FOLLOWER",
+        1: "CANDIDATE",
+        2: "LEADER",
+    }
+
+def raft_state_str(state):
+    return RAFT_STATE_TBL.get(state, f"UNKNOWN_STATE({state})")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="LDMS Monitoring Cluster Manager")
@@ -765,12 +821,25 @@ if __name__ == "__main__":
     parser.add_argument("--version", metavar="VERSION",
                         help="The OVIS version for the output syntax (4 or 5), default is 4",
                         default=4)
+    parser.add_argument("--log-level", default="info",
+                        help="Log level (debug, info, warn, error, fatal)")
     args = parser.parse_args()
+    LOG_LEVEL_TBL = dict(
+                DEBUG    = logging.DEBUG,
+                INFO     = logging.INFO,
+                WARN     = logging.WARN,
+                WARNING  = logging.WARNING, # alias of WARN
+                ERROR    = logging.ERROR,
+                FATAL    = logging.FATAL,
+                CRITICAL = logging.CRITICAL, # alias of FATAL
+            )
+    log_level = LOG_LEVEL_TBL.get( args.log_level.upper(), 0 )
     logging.basicConfig(
             format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s %(message)s',
             datefmt='%F %T',
             )
     log = logging.getLogger(__name__)
+    log.setLevel(log_level)
 
     # Load the cluster configuration file. This configures the daemons
     # that support the key/value configuration database
