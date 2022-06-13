@@ -6,3 +6,15 @@ members:
     port: 2379
   - host: orion-03
     port: 2379
+
+# The `port` in the maestro_members is a passive port for RAFT communication
+# among maestro members. It could be any port that is not occupied. `4411` is
+# selected in this example because 4411 is not listed in the well known TCP port
+# list, and `411` is the default ldmsd port.
+maestro_members:
+  - host: orion-01
+    port: 4411
+  - host: orion-02
+    port: 4411
+  - host: orion-03
+    port: 4411
