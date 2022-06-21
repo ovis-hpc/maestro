@@ -3,14 +3,15 @@ import os, sys
 import errno
 import yaml
 import argparse
-import etcd3
 import json
+import subprocess
+import socket
 import time
 import itertools as it
 from collections import Mapping, Sequence
 from maestro.maestro_util import *
 
-class Cluster(object):
+class ClusterCtrl(object):
     def emit_value(self, path, value):
         try:
             res = client.put(path, str(value))
@@ -131,6 +132,7 @@ class Cluster(object):
                         'auth' : { 'name' : auth_name, 'conf' : auth_conf, 'plugin' : plugin }
                     }
                     ep_dict[spec['names']][dname]['endpoints'][ep_name] = h
+                    ep_dict[spec['names']][dname]['addr'] = host
         return ep_dict
 
     def build_groups(self, config):
@@ -380,23 +382,88 @@ class Cluster(object):
             print(str(e)+' '+str(c.tb_lineno))
             return 1
 
-    def write_listeners(self, fd, dmn_grp):
-        for dmn_name in self.daemons[dmn_grp]:
-            for endp in self.daemons[dmn_grp][dmn_name]['endpoints']:
-                ep = self.daemons[dmn_grp][dmn_name]['endpoints'][endp]
-                if ep['maestro_comm'] is False:
-                    auth = check_opt
-                    auth = check_opt('auth', ep)
-                    auth_opt = check_opt('conf', ep)
-                    if auth:
-                        plugin = check_opt('plugin', ep['auth'])
-                        fd.write(f'auth_add name={auth}')
-                        self.write_opt_attr(fd, 'plugin', plugin, endline=False)
-                        self.write_opt_attr(fd, 'conf', auth_opt)
-                    fd.write(f'listen xprt={ep["xprt"]} port={ep["port"]}')
-                    self.write_opt_attr(fd, 'auth', auth, endline=False)
+    def local_mode(self, local_path):
+        # Local mode uses hostname to help identify which daemon(s) to start
+        hostname = socket.gethostname()
+        local_list = {}
+        fd = None
+        match_host = False
+        for dmn_grp in self.daemons:
+            for dmn in self.daemons[dmn_grp]:
+                if hostname == self.daemons[dmn_grp][dmn]['addr']:
+                    match_host = True
+                    local_list[dmn] = self.daemons[dmn_grp][dmn]
+                    local_list[dmn]['dmn_grp'] = dmn_grp
+                    if dmn_grp in self.aggregators and dmn in self.aggregators[dmn_grp]:
+                        try:
+                            fd = open(f'{local_path}/{dmn}.conf', 'w+')
+                            self.write_listeners(fd, dmn_grp, dmn)
+                            self.write_dmn_producers(fd, dmn_grp, dmn)
+                            self.write_stream_subscribe(fd, dmn_grp, dmn)
+                            self.write_agg_plugins(fd, dmn_grp, dmn)
+                            self.write_updaters(fd, dmn_grp)
+                            self.write_stores(fd, dmn_grp)
+                        except Exception as e:
+                            print(f'Error {e}: writing ldms configuration files')
+                    if fd:
+                        fd.close()
+                    if dmn_grp in self.samplers:
+                        fd = open(f'{local_path}/{dmn}.conf', 'w+')
+                        # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
+                        self.write_samplers(fd, dmn_grp)
+                        self.write_listeners(fd, dmn_grp, dmn)
+                    if fd:
+                        fd.close()
+                    print(f'Starting {dmn}')
+                    start_args = self.ldmsd_arg_list(local_path, dmn_grp, dmn)
+                    local_list[dmn] = subprocess.Popen(start_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        if match_host is False:
+            print(f'{hostname} does not match any daemon hosts in the ldms configuration file')
+        for dmn in local_list:
+            local_list[dmn].wait()
+
+    def ldmsd_arg_list(self, local_path, dmn_grp, dmn):
+        start_list = [ 'ldmsd' ]
+        for ep in self.daemons[dmn_grp][dmn]['endpoints']:
+            if self.daemons[dmn_grp][dmn]['endpoints'][ep]['maestro_comm'] is True:
+                ep_ = self.daemons[dmn_grp][dmn]['endpoints'][ep]
+                start_list.append('-x')
+                start_list.append(f'{ep_["xprt"]}:{ep_["port"]}')
+                auth = check_opt('auth', ep_)
+                if auth:
+                    auth_plugin = check_opt('plugin', ep_['auth'])
+                    auth_opt = check_opt('conf', ep_)
+                    start_list.append('-a')
+                    start_list.append(auth_plugin)
+                    if auth_opt:
+                        if len(auth_opt.split('=')) < 2:
+                            auth_opt = f'conf={auth_opt}'
+                        start_list.append('-A')
+                        start_list.append(auth_opt)
+        start_list.append('-c')
+        start_list.append(f'{local_path}/{dmn}.conf')
+        start_list.append('-r')
+        start_list.append(f'{local_path}/{dmn}.pid')
+        start_list.append('-l')
+        start_list.append(f'{local_path}/{dmn}.log')
+        start_list.append(f'-F')
+        return start_list
+
+    def write_listeners(self, fd, dmn_grp, dmn_name):
+        for endp in self.daemons[dmn_grp][dmn_name]['endpoints']:
+            ep = self.daemons[dmn_grp][dmn_name]['endpoints'][endp]
+            if ep['maestro_comm'] is False:
+                auth = check_opt
+                auth = check_opt('auth', ep)
+                auth_opt = check_opt('conf', ep)
+                if auth:
+                    plugin = check_opt('plugin', ep['auth'])
+                    fd.write(f'auth_add name={auth}')
+                    self.write_opt_attr(fd, 'plugin', plugin, endline=False)
                     self.write_opt_attr(fd, 'conf', auth_opt)
-            break
+                fd.write(f'listen xprt={ep["xprt"]} port={ep["port"]}')
+                self.write_opt_attr(fd, 'auth', auth, endline=False)
+                self.write_opt_attr(fd, 'conf', auth_opt)
 
     def write_opt_attr(self, fd, attr, val, endline=True):
         # Include leading space
@@ -404,6 +471,62 @@ class Cluster(object):
             fd.write(f' {attr}={val}')
         if endline:
             fd.write(f'\n')
+
+    def write_dmn_producers(self, fd, group_name, dmn):
+        if group_name in self.producers:
+            ''' Balance samplers across aggregators '''
+            loop = round(len(self.producers[group_name]) / len(self.aggregators[group_name].keys()))
+            prdcrs = list(self.producers[group_name].keys())
+            aggs = list(self.daemons[group_name].keys())
+            idx = int(aggs.index(dmn))
+            ppd =  int(len(prdcrs) / len(self.daemons[group_name]))
+            prdcr_idx = int(ppd * idx)
+            prod_group = prdcrs[idx:prdcr_idx+ppd]
+            i = 0
+            auth = None
+            auths = {}
+            for ep in prod_group:
+                producer = self.producers[group_name][ep]
+                auth = check_opt('auth', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
+                auth_opt = check_opt('conf', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
+                if auth in auths:
+                    continue
+                else:
+                    auths[auth] = { 'conf' : auth_opt }
+            for auth in auths:
+                plugin = check_opt('plugin', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['auth'])
+                if plugin is None:
+                    print(f'Please specify auth plugin type for producer "{producer["daemon"]}" with auth name "{auth}"\n'\
+                           'configuration file generation will continue, but auth will likely be denied.\n')
+                    plugin = auth
+                fd.write(f'auth_add name={auth} plugin={plugin}')
+                self.write_opt_attr(fd, 'conf', auths[auth]['conf'])
+            for ep in prod_group:
+                if i >= loop:
+                    break
+                regex = False
+                producer = self.producers[group_name][ep]
+                pname = producer['name']
+                port = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['port']
+                xprt = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['xprt']
+                hostname = self.daemons[producer['dmn_grp']][producer['daemon']]['addr']
+                auth = check_opt('auth', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
+                ptype = producer['type']
+                interval = producer['reconnect']
+                fd.write(f'prdcr_add name={pname} '+
+                         f'host={hostname} '+
+                         f'port={port} '+
+                         f'xprt={xprt} '+
+                         f'type={ptype} '+
+                         f'interval={interval}')
+                self.write_opt_attr(fd, 'auth', auth)
+                last_sampler = pname
+                i += 1
+                if 'regex' in producer:
+                    regex = True
+                    fd.write(f'prdcr_start_regex regex={producer["regex"]}\n')
+                if not regex:
+                    fd.write(f'prdcr_start_regex regex=.*\n')
 
     def write_producers(self, fd, group_name):
         #Writes producer configuration to file fd
@@ -467,8 +590,9 @@ class Cluster(object):
 
     def write_samplers(self, fd, smplr_group):
         for sampler in self.samplers[smplr_group]['plugins']:
-            cfg_args = { 'producer'     : '${HOSTNAME}',
-                         'instance'     : '${HOSTNAME}' +'/'+sampler['name'],
+            hostname = socket.gethostname()
+            cfg_args = { 'producer'     : f'{hostname}',
+                         'instance'     : f'{hostname}/{sampler["name"]}',
                          'component_id' : '${LDMS_COMPONENT_ID}' }
             for attr in sampler['config']:
                 if attr == 'name' or attr == 'interval':
@@ -503,6 +627,25 @@ class Cluster(object):
                     regex = '.*'
                 fd.write(f'prdcr_subscribe stream={stream["stream"]} '\
                          f'regex={regex}\n')
+
+    def write_aggregators(self, path, group_name):
+        # Agg config
+        try:
+            ''' "Balance" agg configuration if all samplers are included in each aggregator '''
+            if group_name not in self.aggregators:
+                return 0
+            for agg in self.aggregators[group_name]:
+                fd = open(f'{path}/{agg}.conf', 'w+')
+                self.write_listeners(fd, group_name, agg)
+                self.write_producers(fd, group_name)
+                self.write_stream_subscribe(fd, group_name, agg)
+                self.write_agg_plugins(fd, group_name, agg)
+                self.write_updaters(fd, group_name)
+                self.write_stores(fd, group_name)
+        except Exception as e:
+            ea, eb, ec = sys.exc_info()
+            print('Agg config Error: '+str(e)+' Line:'+str(ec.tb_lineno))
+            raise ValueError
 
     def write_agg_plugins(self, fd, group_name, agg):
         # Write independent plugin configuration for group <group_name>
@@ -565,12 +708,13 @@ class Cluster(object):
             # Sampler config
             if self.samplers != None:
                 try:
-                    self.write_sampler_plugins(self)
+                    self.write_sampler_plugins(group_name)
                     # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
                     if group_name in self.samplers:
                         fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
                         self.write_samplers(fd, group_name)
-                        self.write_listeners(fd, group_name)
+                        for dmn_name in self.daemons[group_name]:
+                            self.write_listeners(fd, group_name, dmn_name)
                     if fd:
                         fd.close()
                 except Exception as e:
@@ -580,37 +724,26 @@ class Cluster(object):
             else:
                 print(f'"samplers" not found in configuration file. Skipping...')
 
-            # Agg config
-            try:
-                ''' "Balance" agg configuration if all samplers are included in each aggregator '''
-                if group_name not in self.aggregators:
-                    continue
-                last_sampler = None
-                for agg in self.aggregators[group_name]:
-                    fd = open(f'{path}/{agg}.conf', 'w+')
-                    self.write_listeners(fd, group_name)
-                    self.write_producers(fd, group_name)
-                    self.write_stream_subscribe(fd, group_name, agg)
-                    self.write_agg_plugins(fd, group_name, agg)
-                    self.write_updaters(fd, group_name)
-                    self.write_stores(fd, group_name)
-            except Exception as e:
-                ea, eb, ec = sys.exc_info()
-                print('Agg config Error: '+str(e)+' Line:'+str(ec.tb_lineno))
-                raise ValueError
+            # Write aggregators in daemon group
+            self.write_aggregators(path, group_name)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="LDMS Monitoring Cluster Configuration")
-    parser.add_argument("--cluster", metavar="FILE", required=True,
-                        help="The name of the etcd cluster configuration file")
     parser.add_argument("--ldms_config", metavar="FILE", required=True,
                         help="The ldmsd load balance domain configuration file. "
                         "This will not start the maestro "
                         "load balancer")
-    parser.add_argument("--prefix", metavar="STRING", required=True,
+    parser.add_argument("--cluster", metavar="FILE",
+                        help="The name of the etcd cluster configuration file")
+    parser.add_argument("--prefix", metavar="STRING",
                         help="The prefix for the dumped aggregator configurations",
                         default="unknown")
+    local = parser.add_mutually_exclusive_group()
+    local.add_argument("--local", action='store_true', default=False, help="Start maestro_ctrl in local mode")
+    parser.add_argument("--local_path", metavar="STRING",
+                       help="The path for the generated local configuration files",
+                       default=os.path.expanduser('~'), required=False)
     parser.add_argument("--generate-config-path", metavar="STRING", required=False,
                         default=False)
     parser.add_argument("--version", metavar="VERSION",
@@ -618,37 +751,51 @@ if __name__ == "__main__":
                         default=4)
     args = parser.parse_args()
 
-    # Load the cluster configuration file. This configures the daemons
-    # that support the key/value configuration database
-    etcd_fp = open(args.cluster)
-    etcd_spec = yaml.safe_load(etcd_fp)
-
-    pfx = etcd_spec['cluster']
-    etcd_hosts = ()
-    for h in etcd_spec['members']:
-        etcd_hosts += (( h['host'], h['port'] ),)
-
-    # All keys in the DB are prefixed with the cluster name, 'pfx'. So we can
-    # have multiple monitoring hosted by the same consensus cluster.
     config_fp = open(args.ldms_config)
     conf_spec = yaml.safe_load(config_fp)
 
-    # Use the 1st host for now
-    client = etcd3.client(host=etcd_hosts[0][0], port=etcd_hosts[0][1],
-        grpc_options=[ ('grpc.max_send_message_length',16*1024*1024),
-                       ('grpc.max_receive_message_length',16*1024*1024)])
+    if args.cluster:
+        # All keys in the DB are prefixed with the prefix name. So we can
+        # have multiple monitoring hosted by the same consensus cluster.
+        import etcd3
+        if not args.prefix:
+            print(f'"prefix" is required when using etcd')
+        # Load the cluster configuration file. This configures the daemons
+        # that support the key/value configuration database
+        etcd_fp = open(args.cluster)
+        etcd_spec = yaml.safe_load(etcd_fp)
 
-    cluster = Cluster(client, args.prefix, conf_spec)
+        etcd_hosts = ()
+        for h in etcd_spec['members']:
+            etcd_hosts += (( h['host'], h['port'] ),)
+
+        # Use the 1st host for now
+        client = etcd3.client(host=etcd_hosts[0][0], port=etcd_hosts[0][1],
+            grpc_options=[ ('grpc.max_send_message_length',16*1024*1024),
+                       ('grpc.max_receive_message_length',16*1024*1024)])
+    else:
+        client = None
+        args.prefix = None
+
+    cluster = ClusterCtrl(client, args.prefix, conf_spec)
+
+    if args.local:
+        cluster.local_mode(args.local_path)
+
     if args.generate_config_path:
         cluster.config_v4(args.generate_config_path)
         print("LDMSD v4 config files generated")
         sys.exit(0)
 
-    # blow away the existing configuration
-    rc = cluster.save_config()
-    if rc:
-        print("Error saving ldms cluster configuration to etcd cluster.")
-        sys.exit(0)
-    print("LDMS aggregator configuration saved to etcd cluster.")
+    # Replace existing configuration if etcd cluster specified
+    if args.cluster:
+        rc = cluster.save_config()
+        if rc:
+            print("Error saving ldms cluster configuration to etcd cluster.")
+            sys.exit(0)
+        print("LDMS aggregator configuration saved to etcd cluster.")
+
+    if not args.cluster and not args.prefix and not args.local and not args.generate_config_path:
+        print(f'No action detected. Exiting...')
 
     sys.exit(0)
