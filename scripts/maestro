@@ -125,6 +125,7 @@ class MaestroMonitor(object):
             comms[dmn_grp] = {}
             for dmn_name in self.daemons[dmn_grp]:
                 listen = []
+                hostname = self.daemons[dmn_grp][dmn_name]['addr']
                 for ep_name in self.daemons[dmn_grp][dmn_name]['endpoints']:
                     ep = self.daemons[dmn_grp][dmn_name]['endpoints'][ep_name]
                     hostname = self.daemons[dmn_grp][dmn_name]['addr']
@@ -385,7 +386,10 @@ class MaestroMonitor(object):
         add_producers(self.comms, self.producers, self.aggregators, self.daemons, agg_state)
 
         # Add all the updaters and storage policies
-        add_updaters(self.comms, self.updaters, self.aggregators, self.daemons, agg_state, rb=self.args.rebalance)
+        rc = add_updaters(self.comms, self.updaters, self.aggregators, self.daemons, agg_state, rb=self.args.rebalance)
+        if rc:
+            self.do_balance=True
+            return 1
         add_stores(self.comms, self.stores, self.aggregators, self.daemons, agg_state)
         # Start the producers assigned to each of the Aggregators
         start_producers(self.comms, self.aggregators, agg_state)
@@ -665,7 +669,9 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                 offset = check_opt('offset', updtr)
                 err, rc = comm.updtr_status()
                 if rc is None:
-                    continue
+                    print(f'Error {err}: getting {agg_name} current updater status')
+                    print(f'{agg_name} has become unresponsive since last rebalance. Rebalancing...')
+                    return 107
                 prdcr_updtr_status = json.loads(rc)
                 for updtr_ in prdcr_updtr_status:
                     if updtr_['name'] == agg_updtr and updtr_['state'] == 'RUNNING':
