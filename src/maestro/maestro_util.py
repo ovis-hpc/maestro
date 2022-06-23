@@ -121,13 +121,16 @@ def check_required(attr_list, container, container_name):
             raise ValueError("The '{0}' attribute is required in a {1}".
                              format(name, container_name))
 
+def NUM_STR(obj):
+    return str(obj) if type(obj) in [ int, float ] else obj
+
 def expand_names(name_spec):
     if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
         names = []
         for name in name_spec:
-            names += hostlist.expand_hostlist(name)
+            names += hostlist.expand_hostlist(NUM_STR(name))
     else:
-        names = hostlist.expand_hostlist(name_spec)
+        names = hostlist.expand_hostlist(NUM_STR(name_spec))
     return names
 
 def parse_to_cfg_str(cfg_obj):
