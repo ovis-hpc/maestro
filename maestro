@@ -84,20 +84,27 @@ class MaestroMonitor(object):
                 listen = []
                 for ep_name in self.daemons[dmn_grp][dmn_name]['endpoints']:
                     ep = self.daemons[dmn_grp][dmn_name]['endpoints'][ep_name]
+                    hostname = self.daemons[dmn_grp][dmn_name]['addr']
                     if 'maestro_comm' not in ep:
                         listen.append(ep)
                         continue
                     conf = check_opt('conf', ep)
-                    comm = Communicator(ep['xprt'],
-                                        ep['addr'],
-                                        ep['port'],
-                                        ep['auth']['name'],
-                                        { 'conf' : conf })
+                    try:
+                        comm = Communicator(ep['xprt'],
+                                            hostname,
+                                            ep['port'],
+                                            ep['auth']['plugin'],
+                                            { 'conf' : conf })
+                    except Exception as e:
+                        print(f'Error initializing transport to ldmsd {dmn_name} at endpoint {ep_name} '\
+                              f'on port {ep["port"]} with transport {ep["xprt"]}')
+                        print(f'{e}')
+                        sys.exit()
                     rc = comm.connect()
                     if not rc:
                         print(f'Failed to communicate with aggregator {dmn_name} on endpoint {ep["name"]}')
                     comms[dmn_grp][dmn_name] = comm
-                add_listeners(comm, dmn_name, listen)
+                    add_listeners(comm, dmn_name, listen)
         return comms
 
     def check_aggs(self, group, agg_state):
@@ -584,10 +591,11 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                 dmn = prod_dict[prod_name]['daemon']
                 ep_name = prod['endpoint']
                 endpoint = endpoints[dmn_grp][dmn]['endpoints'][ep_name]
+                hostname = endpoints[dmn_grp][dmn]['addr']
                 auth = check_opt('auth', endpoint)
                 comm.prdcr_add(
                             prod_name, prod['type'],
-                            endpoint['xprt'], endpoint['addr'], endpoint['port'],
+                            endpoint['xprt'], hostname, endpoint['port'],
                             prod['reconnect'], auth=auth)
     return True
 
