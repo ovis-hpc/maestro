@@ -6,6 +6,7 @@ import argparse
 import etcd3
 import json
 import time
+import itertools as it
 from collections import Mapping, Sequence
 from maestro_util import *
 
@@ -92,22 +93,29 @@ class Cluster(object):
                            spec, "daemons specification")
             hosts = expand_names(spec['hosts'])
             dnames = expand_names(spec['names'])
+            hostnames = hosts
+            if len(dnames) != len(hostnames):
+                hosts = [ [host]*(len(dnames)//len(hostnames)) for host in hostnames ]
+                hosts = list(it.chain.from_iterable(hosts))
             ep_names = []
-            ports = []
+            ep_ports = []
             for endpoints in spec['endpoints']:
                 check_required(['names','ports'],
                                endpoints, 'endpoint specification')
-                ep_names.append(expand_names(endpoints['names']))
-                epnames = expand_names(endpoints['names'])
-                ep_ports = expand_names(endpoints['ports'])
-                if len(ep_ports) != len(epnames):
-                    ep_ports += [ ep_ports[0] for i in range(0, len(epnames)) ]
-                ports.append(ep_ports)
+                cur_epnames = expand_names(endpoints['names'])
+                ep_names.append(cur_epnames)
+                cur_ports = expand_names(endpoints['ports'])
+                _ports = cur_ports
+                if len(cur_ports) != len(cur_epnames):
+                    cur_ports = [ _ports for i in range(0, len(cur_epnames)//len(_ports)) ]
+                    cur_ports = list(it.chain.from_iterable(cur_ports))
+                ep_ports.append(cur_ports)
             ep_dict[spec['names']] = {}
             for dname, host in zip(dnames, hosts):
                 ep_dict[spec['names']][dname] = {}
+                ep_dict[spec['names']][dname]['addr'] = host
                 ep_dict[spec['names']][dname]['endpoints'] = {}
-                for ep_, ep_port, ep in zip(ep_names, ports, spec['endpoints']):
+                for ep_, ep_port, ep in zip(ep_names, ep_ports, spec['endpoints']):
                     port = ep_port.pop(0)
                     ep_name = ep_.pop(0)
                     xprt = check_opt('xprt', ep)
@@ -117,7 +125,6 @@ class Cluster(object):
                     maestro_comm = parse_yaml_bool(check_opt('maestro_comm', ep))
                     h = {
                         'name' : ep_name,
-                        'addr' : host,
                         'port' : port,
                         'xprt' : xprt,
                         'maestro_comm' : maestro_comm,
@@ -439,7 +446,7 @@ class Cluster(object):
                 pname = producer['name']
                 port = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['port']
                 xprt = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['xprt']
-                hostname = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['addr']
+                hostname = self.daemons[producer['dmn_grp']][producer['daemon']]['addr']
                 auth = check_opt('auth', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
                 ptype = producer['type']
                 interval = producer['reconnect']

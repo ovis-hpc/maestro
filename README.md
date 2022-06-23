@@ -96,14 +96,17 @@ daemons:
         maestro_comm : True
         xprt  : sock
         auth  :
-           name : munge
+           name : ovis1 # The authentication domain name
+           plugin : ovis # The plugin type
+           conf : /opt/ovis/maestro/secret.conf
 
       - names : &sampler-rdma-endpoints "node-[1-10]-10002/rdma"
         ports : *sampler-ports
         maestro_comm : False
         xprt  : rdma
         auth  :
-          name : munge
+          name : munge1
+          plugin : munge
 
   - names : &l1-agg "l1-aggs-[11-14]"
     hosts : &l1-agg-hosts "node-[11-14]"
@@ -113,7 +116,8 @@ daemons:
         maestro_comm : True
         xprt  : sock
         auth  :
-          name : munge
+          name : munge1
+          plugin : munge
 
   - names : &l2-agg "l2-agg"
     hosts : &l2-agg-host "node-15"
@@ -123,7 +127,8 @@ daemons:
         maestro_comm : True
         xprt  : sock
         auth  :
-          name : munge
+          name : munge1
+          plugin : munge
 
 aggregators:
   - daemons   : *l1-agg
