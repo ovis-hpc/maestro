@@ -589,6 +589,7 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                     continue
                 prod = prod_dict[prod_name]
                 dmn = prod_dict[prod_name]['daemon']
+                dmn_grp = prod_dict[prod_name]['dmn_grp']
                 ep_name = prod['endpoint']
                 endpoint = endpoints[dmn_grp][dmn]['endpoints'][ep_name]
                 hostname = endpoints[dmn_grp][dmn]['addr']

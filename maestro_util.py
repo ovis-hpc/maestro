@@ -78,6 +78,9 @@ def cvt_intrvl_str_to_us(interval_s):
         if interval_s.split('m')[1] != '':
             raise ValueError(f"{error_str}")
         ival_s = interval_s.split('m')[0]
+    else:
+        ival_s = interval_s
+        factor = 1
     try:
         mult = float(ival_s)
     except:
@@ -86,6 +89,8 @@ def cvt_intrvl_str_to_us(interval_s):
 
 def check_offset(interval_us, offset_us=None):
     if offset_us:
+        interval_us = int(interval_us)
+        offset_us = int(offset_us)
         if offset_us/interval_us > .5:
             offset_us = interval_us/2
     else:
