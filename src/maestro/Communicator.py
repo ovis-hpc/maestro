@@ -48,7 +48,7 @@
 import os
 from ovis_ldms import ldms
 from ldmsd.ldmsd_request import LDMSD_Request, LDMSD_Req_Attr
-from maestro_util import cvt_intrvl_str_to_us, check_offset
+from .maestro_util import cvt_intrvl_str_to_us, check_offset
 import json
 import errno
 """
@@ -139,7 +139,7 @@ class Communicator(object):
         if self.state != self.CONNECTED:
             raise ConnectionError("Transport is not connected.")
         return self.ldms.send(cmd)
- 
+
     def receive_response(self, recv_len = None):
         """This is called by the LDMSRequest class to receive a reply"""
         if self.state != self.CONNECTED:
@@ -317,7 +317,7 @@ class Communicator(object):
 
         Keyword Parameters:
         name - If not None (default), the name of the producer to query.
-      
+
         Returns:
         A tuple of status, data
         - status is an errno from the errno module
@@ -592,7 +592,7 @@ class Communicator(object):
 
         Keyword Parameters:
         name - If not None (default), the name of the producer to query.
-      
+
         Returns:
         A tuple of status, data
         - status is an errno from the errno module
@@ -640,7 +640,7 @@ class Communicator(object):
         if schema:
             attrs.append(attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.SCHEMA, value=schema)))
         if len(attrs) == 0:
-            attrs = None    
+            attrs = None
         req = LDMSD_Request(command_id=LDMSD_Request.PRDCR_SET_STATUS, attrs=attrs)
         try:
             req.send(self)
@@ -842,7 +842,7 @@ class Communicator(object):
         """
         Add matching producers to an updater policy. The
         updater must be STOPPED.
-        
+
         Parameters:
         - The updater name
         - A regular expression matching zero or more producers
@@ -865,12 +865,12 @@ class Communicator(object):
         except Exception:
             self.close()
             return errno.ENOTCONN, None
-        
+
     def updtr_prdcr_del(self, name, regex):
         """
         Remove matching producers from an updater policy. The
         updater must be STOPPED.
-        
+
         Parameters:
         - The updater name
         - A regular expression matching zero or more producers
@@ -893,7 +893,7 @@ class Communicator(object):
         except Exception:
             self.close()
             return errno.ENOTCONN, None
-        
+
     def updtr_match_add(self, name, regex, match='schema'):
         """
         Add a match condition that identifies the set that will be
@@ -1099,7 +1099,7 @@ class Communicator(object):
         """
         Add matching producers to an storage policy. The
         storage policy must be STOPPED.
-        
+
         Parameters:
         - The storage policy name
         - A regular expression matching zero or more producers
@@ -1122,12 +1122,12 @@ class Communicator(object):
         except Exception:
             self.close()
             return errno.ENOTCONN, None
-        
+
     def strgp_prdcr_del(self, name, regex):
         """
         Remove matching producers from an storage policy. The
         storage policy must be STOPPED.
-        
+
         Parameters:
         - The storage policy name
         - A regular expression matching zero or more producers
@@ -1150,7 +1150,7 @@ class Communicator(object):
         except Exception:
             self.close()
             return errno.ENOTCONN, None
-        
+
     def strgp_metric_add(self, name, metric_name):
         """
         Add a metric name that will be stored. By default all metrics

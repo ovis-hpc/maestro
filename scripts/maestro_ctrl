@@ -8,7 +8,7 @@ import json
 import time
 import itertools as it
 from collections import Mapping, Sequence
-from maestro_util import *
+from maestro.maestro_util import *
 
 class Cluster(object):
     def emit_value(self, path, value):

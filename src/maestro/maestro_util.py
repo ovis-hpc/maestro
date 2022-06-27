@@ -1,5 +1,5 @@
 import collections
-import hostlist
+from . import hostlist
 
 AUTH_ATTRS = [
     'auth',
