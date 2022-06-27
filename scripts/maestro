@@ -11,8 +11,8 @@ import time
 import re
 import socket
 import logging
-from Communicator import Communicator
-from maestro_util import *
+from maestro.Communicator import Communicator
+from maestro.maestro_util import *
 
 def agg_hosts(grp_name, aggs, daemons):
     return [ [ dmn, daemons[grp_name][dmn]['endpoints'][ep]] for dmn in aggs[grp_name] for ep in daemons[grp_name][dmn]['endpoints'] if 'maestro_comm' in daemons[grp_name][dmn]['endpoints'][ep] ]

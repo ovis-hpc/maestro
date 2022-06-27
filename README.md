@@ -20,6 +20,19 @@ configuration across the remaining aggregators in a group
 In this current release, Maestro does not start and start __ldmsd__
 daemons, however, this feature is planned for the future.
 
+## Install / Uninstall
+
+```sh
+$ pip3 install --upgrade --prefix /opt/ovis .
+# This assumed that LDMS is installed with /opt/ovis prefix.
+# Use `upgrade` option so that the existing installation will get upgrade
+# from the source tree. Otherwise, the existing files/directories were left
+# untouched.
+
+# to uninstall
+$ pip3 uninstall maestro
+```
+
 ## Dependencies
 etcd3 can be downlaoded via pip3, or from source at:
 https://github.com/etcd-io/etcd
@@ -52,7 +65,7 @@ There are two principle commands, maestro and maestro_ctrl. maestro will run the
 
 Sampler interval's and offsets can be configured during runtime, by updating the ldmsd yaml
 configuration file, and running the maestro_ctrl command to update the etcd cluster with the
-new configuration. Maestro will detect updates to sampler intervals and offsets, and make 
+new configuration. Maestro will detect updates to sampler intervals and offsets, and make
 the proper configuration updates to the running samplers.
 
 ### ETCD Cluster Configuration
