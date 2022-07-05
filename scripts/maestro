@@ -272,17 +272,15 @@ class MaestroMonitor(object):
         for agg in grp_aggs:
             agg_set_size = 0
             for smplr in list(grp_sets):
-                if agg_set_size + grp_sets[smplr]['smplr_set_size'] <= bytes_per_agg and grp_sets[smplr]['smplr_set_size'] != 0:
-                    agg_set_size += grp_sets[smplr]['smplr_set_size']
-                    self.aggregators[group][agg]['prdcrs'][smplr] = grp_sets.pop(smplr)
-                else:
-                    for set_ in list(grp_sets[smplr]['sets']):
-                        if agg_set_size + grp_sets[smplr]['sets'][set_] <= bytes_per_agg and grp_sets[smplr]['sets'][set_] != 0:
-                            agg_set_size += grp_sets[smplr]['sets'][set_]
-                            if smplr not in self.aggregators[group][agg]['prdcrs']:
-                                self.aggregators[group][agg]['prdcrs'][smplr] = {}
-                                self.aggregators[group][agg]['prdcrs'][smplr]['sets'] = {}
-                            self.aggregators[group][agg]['prdcrs'][smplr]['sets'][set_] = grp_sets[smplr]['sets'].pop(set_)
+                for set_ in list(grp_sets[smplr]['sets']):
+                    if agg_set_size + grp_sets[smplr]['sets'][set_] <= bytes_per_agg and grp_sets[smplr]['sets'][set_] != 0:
+                        agg_set_size += grp_sets[smplr]['sets'][set_]
+                        if smplr not in self.aggregators[group][agg]['prdcrs'] and len(grp_sets[smplr]['sets']) > 0:
+                            self.aggregators[group][agg]['prdcrs'][smplr] = {}
+                            self.aggregators[group][agg]['prdcrs'][smplr]['sets'] = {}
+                        self.aggregators[group][agg]['prdcrs'][smplr]['sets'][set_] = grp_sets[smplr]['sets'].pop(set_)
+                if len(grp_sets[smplr]['sets']) == 0:
+                    grp_sets.pop(smplr)
             self.aggregators[group][agg]['agg_set_size'] = agg_set_size
         return grp_sets
 
@@ -352,7 +350,6 @@ class MaestroMonitor(object):
             agg_count = len(grp_aggs)
             if agg_count != 0:
                 size_per_agg = dset_size // agg_count
-                remainder = dset_size % agg_count
             else:
                 # None of the aggregators are running
                 break
