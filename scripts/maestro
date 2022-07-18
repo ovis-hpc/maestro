@@ -681,10 +681,12 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                         rc, err = comm.updtr_del(agg_updtr)
                         if rc:
                             print(f'Error removing updater {agg_updtr}: {err}')
-                if 'push' in updtr:
-                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push=updtr['push'])
-                elif 'auto' in updtr and updtr['auto'] == "True":
-                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, auto=updtr['auto'])
+                if updtr['mode'] == 'auto' or updtr['mode'] == 'auto_interval':
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, auto=True)
+                elif updtr['mode'] == 'push':
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push=True)
+                elif updtr['mode'] == 'onchange':
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push='onchange')
                 else:
                     rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset)
 

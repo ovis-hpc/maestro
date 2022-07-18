@@ -271,14 +271,10 @@ class ClusterCtrl(object):
                     }
                     if 'offset' in updtr_spec:
                         updtr['offset'] = cvt_intrvl_str_to_us(updtr_spec['offset'])
-                    if 'auto' in updtr_spec and 'push' in updtr_spec:
-                        raise ValueError(f"The updater specification: {json.dumps(updtr_spec)} "
-                                          "contains both 'push' and 'auto' which are "
-                                          "mutually exclusive")
-                    if 'auto' in updtr_spec:
-                        updtr['auto'] = updtr_spec['auto']
-                    if 'push' in updtr_spec:
-                        updtr['push'] = updtr_spec['push']
+                    if 'mode' in updtr_spec:
+                        updtr['mode'] = updtr_spec['mode']
+                    else:
+                        updtr['mode'] = 'pull'
                     grp_updaters[updtr_name] = updtr
                     updtr_cnt += 1
         return updaters
@@ -665,13 +661,15 @@ class ClusterCtrl(object):
                 if 'mode' in updtr_group[updtr]:
                     mode = updtr_group[updtr]['mode']
                 else:
-                    mode = 'static'
+                    mode = 'pull'
                 # Check mode
                 if mode == 'push':
-                    updtr_str += 'push=onchange\n'
-                elif mode == 'auto_interval':
-                    updtr_str += 'auto_interval=True\n'
-                fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
+                    updtr_str = f'{updtr_str} push=True'
+                elif mode == 'onchange':
+                    updtr_str = f'{updtr_str} push=onchange'
+                elif mode == 'auto_interval' or 'auto':
+                    updtr_str = f'{updtr_str} auto_interval=True'
+                fd.write(f'{updtr_str} '+
                          f'interval={interval}')
                 offset = check_opt('offset', updtr_group[updtr])
                 self.write_opt_attr(fd, 'offset', offset)
