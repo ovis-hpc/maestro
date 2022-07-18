@@ -661,17 +661,20 @@ class ClusterCtrl(object):
             updtr_group = self.updaters[group_name]
             for updtr in updtr_group:
                 interval = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'])
-                updtr_str = f'updtr_add name={updtr_group[updtr]["name"]} '
+                updtr_str = f'updtr_add name={updtr_group[updtr]["name"]}'
                 if 'mode' in updtr_group[updtr]:
                     mode = updtr_group[updtr]['mode']
                 else:
                     mode = 'static'
                 # Check mode
-                if mode == 'push':
-                    updtr_str += 'push=onchange\n'
-                elif mode == 'auto_interval':
-                    updtr_str += 'auto_interval=True\n'
-                fd.write(f'updtr_add name={updtr_group[updtr]["name"]} '+
+                if 'push' in mode:
+                    if len(mode.split('=')) < 2:
+                        updtr_str += ' push=onchange'
+                    else:
+                        updtr_str = f'{updtr_str} {mode}'
+                elif mode == 'auto_interval' or 'auto':
+                    updtr_str += ' auto_interval=True'
+                fd.write(f'{updtr_str} '+
                          f'interval={interval}')
                 offset = check_opt('offset', updtr_group[updtr])
                 self.write_opt_attr(fd, 'offset', offset)
