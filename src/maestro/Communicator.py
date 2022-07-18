@@ -655,7 +655,7 @@ class Communicator(object):
             status = None
         return err, status
 
-    def updtr_add(self, name, interval=None, offset=None, push=None, auto=None, perm=None):
+    def updtr_add(self, name, interval, offset=None, push=None, auto=None, perm=None):
         """
         Add an Updater that will periodically update Producer metric sets either
         by pulling the content or by registering for an update push. The default
@@ -687,25 +687,23 @@ class Communicator(object):
         - data is an error message if status != 0 or None
         """
         attrs = [
-            LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name)
+            LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.NAME, value=name),
+            LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(interval))
         ]
-        if interval:
-            offset = check_offset(interval, offset)
+        offset = check_offset(interval, offset)
+        if offset:
             attrs += [
-                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(interval)),
                 LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset))
+            ]
+        if auto:
+            attrs += [
+                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.AUTO_INTERVAL, value=str(auto))
             ]
         elif push:
             if push != 'onchange' and push != True:
                 return errno.EINVAL, "EINVAL"
             attrs += [
                 LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PUSH, value=str(push))
-            ]
-        else:
-            if auto is None:
-                return errno.EINVAL, "EINVAL"
-            attrs += [
-                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.AUTO_INTERVAL, value=str(auto))
             ]
         if perm:
             attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.PERM, value=str(perm)))
@@ -797,8 +795,9 @@ class Communicator(object):
                 return errno.EINVAL, "'auto' is incompatible with 'interval'"
             attrs += [
                 LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.INTERVAL, value=str(interval)),
-                LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset))
             ]
+            if offset:
+                attrs.append(LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.OFFSET, value=str(offset)))
         elif auto:
             attrs += [
                 LDMSD_Req_Attr(attr_id=LDMSD_Req_Attr.AUTO_INTERVAL, value=str(auto))

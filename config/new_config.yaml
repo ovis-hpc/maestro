@@ -37,13 +37,36 @@ aggregators:
         endpoints : *sampler-endpoints
         reconnect : 20s
         type      : active
-        updaters  :
+        updaters  : # The following are possible usages of each updater mode
           - mode     : pull
             interval : "1.0s"
             offset   : "0ms"
             sets     :
               - regex : .*
                 field : inst
+
+          # Examples of other updater modes are listed below
+          #- mode     : auto 
+          #  interval : "1.0s"
+          #  offset   : "0ms"
+          #  sets     :
+          #    - regex : .*
+          #      field : inst
+
+          #- mode     : push
+          #  interval : "1.0s"
+          #  offset   : "0ms"
+          #  sets     :
+          #    - regex : .*
+          #      field : inst
+
+          #- mode     : onchange
+          #  interval : "1.0s"
+          #  offset   : "0ms"
+          #  sets     :
+          #    - regex : .*
+          #      field : inst
+
     subscribe : # Aggregator stream subscriptions
       - stream : kokkos-perf-data # Stream name
         regex : .* # Regular expression that matches producer names

@@ -93,8 +93,6 @@ def check_offset(interval_us, offset_us=None):
         offset_us = int(offset_us)
         if offset_us/interval_us > .5:
             offset_us = interval_us/2
-    else:
-        offset_us = 0
     return offset_us
 
 def check_opt(attr, spec):
