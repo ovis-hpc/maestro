@@ -89,6 +89,13 @@ class ClusterCtrl(object):
         """
         ep_dict = {}
         node_config = config['daemons']
+        if type(node_config) is not list:
+            print(f'{LDMS_YAML_ERR}')
+            print(f'daemons {LIST_ERR}')
+            print(f'e.g. daemons:')
+            print(f'       - names : &l1-agg "l1-aggs-[1-8]"')
+            print(f'         hosts : &l1-agg-hosts "node-[1-8]"')
+            sys.exit()
         for spec in node_config:
             check_required([ 'names', 'endpoints', 'hosts' ],
                            spec, "daemons specification")
@@ -100,6 +107,18 @@ class ClusterCtrl(object):
                 hosts = list(it.chain.from_iterable(hosts))
             ep_names = []
             ep_ports = []
+            if type(spec['endpoints']) is not list:
+                print(f'{LDMS_YAML_ERR}')
+                print(f'endpoints {LIST_ERR}')
+                print(f'e.g endpoints :')
+                print(f'      - names : &l1-agg-endpoints "node-[1-8]-[10101]"')
+                print(f'        ports : &agg-ports "[10101]"')
+                print(f'        maestro_comm : True')
+                print(f'        xprt  : sock')
+                print(f'        auth  :')
+                print(f'          name : munge1')
+                print(f'          plugin : munge')
+                sys.exit()
             for endpoints in spec['endpoints']:
                 check_required(['names','ports'],
                                endpoints, 'endpoint specification')
@@ -135,32 +154,20 @@ class ClusterCtrl(object):
                     ep_dict[spec['names']][dname]['addr'] = host
         return ep_dict
 
-    def build_groups(self, config):
-        groups = {}
-        if 'daemons' not in config:
-            return groups
-        group_conf = config['daemons']
-        for group_spec in group_conf:
-            check_required([ 'names', 'hosts', 'endpoints'],
-                           group_spec, "daemon specification")
-            endpoints = []
-            for ep in group_spec['endpoints']:
-                endpoints += expand_names(ep['names'])
-            group_name = group_spec['names']
-            hosts = expand_names(group_spec['hosts'])
-            group = {
-                'name'       : group_name,
-                'hosts'      : hosts,
-                'endpoints'  : endpoints,
-            }
-            groups[group_name] = group
-        return groups
-
     def build_aggregators(self, config):
         aggregators = {}
         if 'aggregators' not in config:
             return aggregators
         agg_conf = config['aggregators']
+        if type(agg_conf) is not list:
+            print(f'{LDMS_YAML_ERR}')
+            print(f'aggregators {LIST_ERR}')
+            print(f'e.g. aggregators:')
+            print(f'       - daemons: "l1-aggregators"')
+            print(f'         peers :')
+            print(f'           - daemons : "samplers"')
+            print(f'             ...     :  ...')
+            return aggregators
         for agg_spec in agg_conf:
             check_required([ 'daemons' ],
                            agg_spec, "aggregator specification")
@@ -192,6 +199,14 @@ class ClusterCtrl(object):
         producers = {}
         for agg in config.get('aggregators', []):
             if 'peers' not in agg:
+                continue
+            if type(agg['peers']) is not list:
+                print(f'{LDMS_YAML_ERR}')
+                print(f'peers {LIST_ERR}')
+                print(f'e.g. peers:')
+                print(f'       - daemons: "samplers"')
+                print(f'         endpoints : "sampler-endpoints"')
+                print(f'         ...       : ...')
                 continue
             for prod in agg['peers']:
                 check_required([ 'endpoints', 'updaters',
@@ -251,6 +266,16 @@ class ClusterCtrl(object):
             if 'peers' not in agg:
                 continue
             for prod in agg['peers']:
+                if type(prod['updaters']) is not list:
+                    print(f'Error parsing ldms_config yaml file')
+                    print(f'Updater spec must be a list of dictionaries, specified with "-" designator in the ldms_config yaml file')
+                    print(f'e.g. updaters:')
+                    print(f'       - mode     : pull')
+                    print(f'         interval : "1.0s"')
+                    print(f'         sets     :')
+                    print(f'           - regex : ".*"')
+                    print(f'             field : inst')
+                    continue
                 for updtr_spec in prod['updaters']:
                     check_required([ 'interval', 'sets', ],
                                    updtr_spec, '"updater" entry')
@@ -287,6 +312,15 @@ class ClusterCtrl(object):
         if 'stores' not in config:
             return None
         stores = {}
+        if type(config['stores']) is not list:
+            print(f'{LDMS_YAML_ERR}')
+            print(f'store {LIST_ERR}')
+            print(f'e.g. stores:')
+            print(f'       - name      : sos-meminfo')
+            print(f'         daemons   : "l1-aggregators"')
+            print(f'         container : ldms_data')
+            print(f'         ...       : ...')
+            return None
         for store_spec in config['stores']:
             check_required([ 'name', 'plugin', 'container', 'schema' ],
                            store_spec, '"store" entry')
@@ -314,6 +348,21 @@ class ClusterCtrl(object):
         if 'samplers' not in config:
             return None
         smplrs = {}
+        if type(config['samplers']) is not list:
+            print(f'{LDMS_YAML_ERR}')
+            print(f'samplers {LIST_ERR}')
+            print(f'e.g. samplers:')
+            print(f'       - daemons : "samplers"')
+            print(f'         plugins :')
+            print(f'           - name        : meminfo')
+            print(f'             interval    : "1.0s"')
+            print(f'              offset      : "0s"')
+            print(f'              config :')
+            print(f'                schema : meminfo')
+            print(f'                component_id : "10001"')
+            print(f'                producer : "node-1"')
+            print(f'                perm : "0777"')
+            return None
         for smplr_spec in config['samplers']:
             check_required([ 'daemons', 'plugins' ],
                            smplr_spec, '"sampler" entry')

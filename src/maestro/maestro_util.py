@@ -27,6 +27,9 @@ INT_ATTRS = [
     'reconnect'
 ]
 
+LDMS_YAML_ERR = 'Error parsing ldms_config yaml file'
+LIST_ERR = 'spec must be a list of dictionaries, specified with "-" in the ldms_config yaml file'
+
 def cvt_intrvl_str_to_us(interval_s):
     """Converts a time interval string to microseconds
 
