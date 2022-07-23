@@ -397,7 +397,7 @@ class ClusterCtrl(object):
                         try:
                             fd = open(f'{local_path}/{dmn}.conf', 'w+')
                             self.write_listeners(fd, dmn_grp, dmn)
-                            self.write_dmn_producers(fd, dmn_grp, dmn)
+                            self.write_producers(fd, dmn_grp, dmn)
                             self.write_stream_subscribe(fd, dmn_grp, dmn)
                             self.write_agg_plugins(fd, dmn_grp, dmn)
                             self.write_updaters(fd, dmn_grp)
@@ -471,16 +471,16 @@ class ClusterCtrl(object):
         if endline:
             fd.write(f'\n')
 
-    def write_dmn_producers(self, fd, group_name, dmn):
+    def write_producers(self, fd, group_name, dmn):
         if group_name in self.producers:
             ''' Balance samplers across aggregators '''
-            loop = round(len(self.producers[group_name]) / len(self.aggregators[group_name].keys()))
+            ppd = -(len(self.producers[group_name]) // -len(self.aggregators[group_name].keys()))
+            rem = len(self.producers[group_name]) % len(self.aggregators[group_name].keys())
             prdcrs = list(self.producers[group_name].keys())
             aggs = list(self.daemons[group_name].keys())
-            idx = int(aggs.index(dmn))
-            ppd =  int(len(prdcrs) / len(self.daemons[group_name]))
-            prdcr_idx = int(ppd * idx)
-            prod_group = prdcrs[idx:prdcr_idx+ppd]
+            agg_idx = int(aggs.index(dmn))
+            prdcr_idx = int(ppd * agg_idx)
+            prod_group = prdcrs[prdcr_idx:prdcr_idx+ppd]
             i = 0
             auth = None
             auths = {}
@@ -501,8 +501,6 @@ class ClusterCtrl(object):
                 fd.write(f'auth_add name={auth} plugin={plugin}')
                 self.write_opt_attr(fd, 'conf', auths[auth]['conf'])
             for ep in prod_group:
-                if i >= loop:
-                    break
                 regex = False
                 producer = self.producers[group_name][ep]
                 pname = producer['name']
@@ -520,67 +518,6 @@ class ClusterCtrl(object):
                          f'interval={interval}')
                 self.write_opt_attr(fd, 'auth', auth)
                 last_sampler = pname
-                i += 1
-                if 'regex' in producer:
-                    regex = True
-                    fd.write(f'prdcr_start_regex regex={producer["regex"]}\n')
-                if not regex:
-                    fd.write(f'prdcr_start_regex regex=.*\n')
-
-    def write_producers(self, fd, group_name):
-        #Writes producer configuration to file fd
-        if group_name in self.producers:
-            ''' Balance samplers across aggregators '''
-            prdcrs = []
-            loop = round(len(self.producers[group_name]) / len(self.aggregators[group_name].keys()))
-            last_sampler = None
-            for prdcr in self.producers[group_name]:
-                prdcrs.append(prdcr)
-            if not last_sampler:
-                idx = 0
-            else:
-                idx = prdcrs.index(last_sampler) + 1
-            prod_group = list(self.producers[group_name].keys())[idx:]
-            i = 0
-            auth = None
-            auths = {}
-            for ep in self.producers[group_name]:
-                producer = self.producers[group_name][ep]
-                auth = check_opt('auth', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
-                auth_opt = check_opt('conf', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
-                if auth in auths:
-                    continue
-                else:
-                    auths[auth] = { 'conf' : auth_opt }
-            for auth in auths:
-                plugin = check_opt('plugin', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['auth'])
-                if plugin is None:
-                    print(f'Please specify auth plugin type for producer "{producer["daemon"]}" with auth name "{auth}"\n'\
-                           'configuration file generation will continue, but auth will likely be denied.\n')
-                    plugin = auth
-                fd.write(f'auth_add name={auth} plugin={plugin}')
-                self.write_opt_attr(fd, 'conf', auths[auth]['conf'])
-            for ep in prod_group:
-                if i >= loop:
-                    break
-                regex = False
-                producer = self.producers[group_name][ep]
-                pname = producer['name']
-                port = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['port']
-                xprt = self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['xprt']
-                hostname = self.daemons[producer['dmn_grp']][producer['daemon']]['addr']
-                auth = check_opt('auth', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
-                ptype = producer['type']
-                interval = producer['reconnect']
-                fd.write(f'prdcr_add name={pname} '+
-                         f'host={hostname} '+
-                         f'port={port} '+
-                         f'xprt={xprt} '+
-                         f'type={ptype} '+
-                         f'interval={interval}')
-                self.write_opt_attr(fd, 'auth', auth)
-                last_sampler = pname
-                i += 1
                 if 'regex' in producer:
                     regex = True
                     fd.write(f'prdcr_start_regex regex={producer["regex"]}\n')
@@ -636,7 +573,7 @@ class ClusterCtrl(object):
             for agg in self.aggregators[group_name]:
                 fd = open(f'{path}/{agg}.conf', 'w+')
                 self.write_listeners(fd, group_name, agg)
-                self.write_producers(fd, group_name)
+                self.write_producers(fd, group_name, agg)
                 self.write_stream_subscribe(fd, group_name, agg)
                 self.write_agg_plugins(fd, group_name, agg)
                 self.write_updaters(fd, group_name)
