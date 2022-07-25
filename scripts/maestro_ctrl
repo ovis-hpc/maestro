@@ -198,46 +198,49 @@ class ClusterCtrl(object):
                                  'reconnect', 'type', ],
                                prod, '"producer" entry')
                 # Use endpoints for producer names and remove names attribute?
-                daemons = prod['daemons']
-                names = expand_names(prod['endpoints'])
-                endpoints = expand_names(prod['endpoints'])
-                group = agg['daemons']
-                smplr_dmns = expand_names(prod['daemons'])
-                if group not in producers:
-                    producers[group] = {}
+                if prod['daemons'] not in self.daemons:
+                    dmn_grps = prod['daemons'].split(',')
+                    eps = prod['endpoints'].split(',')
+                else:
+                    dmn_grps = [ prod['daemons'] ]
+                    eps = [ prod['endpoints'] ]
+                for daemons, endpoints in zip(dmn_grps, eps):
+                    names = expand_names(endpoints)
+                    endpoints = expand_names(endpoints)
+                    group = agg['daemons']
+                    smplr_dmns = expand_names(daemons)
+                    if group not in producers:
+                        producers[group] = {}
 
-                if len(names) != len(endpoints):
-                    raise ValueError('"producer": The "host" and "name" specifications must '
-                                     '            expand to the same number of strings')
-                upd_spec = prod['updaters']
-                # Expand and generate all the producers
-                typ = prod['type']
-                reconnect = cvt_intrvl_str_to_us(prod['reconnect'])
-                ports_per_dmn = len(endpoints) / len(smplr_dmns)
-                ppd = ports_per_dmn
-                try:
-                    for name in names:
-                        if ppd > 1:
-                            smplr_dmn = smplr_dmns[0]
-                            ppd -= 1
-                        else:
-                            smplr_dmn = smplr_dmns.pop(0)
-                            ppd = ports_per_dmn
-                        endpoint = endpoints.pop(0)
-                        prod = {
-                            'daemon'    : smplr_dmn,
-                            'dmn_grp'   : daemons,
-                            'name'      : name,
-                            'endpoint'  : endpoint,
-                            'type'      : typ,
-                            'group'     : group,
-                            'reconnect' : reconnect,
-                            'updaters'  : upd_spec
-                        }
-                        producers[group][endpoint] = prod
-                except:
-                    print(f'Error building producer config:\n'\
-                          f'Please ensure "endpoints" is configured to the correct number of ports specified.')
+                    upd_spec = prod['updaters']
+                    # Expand and generate all the producers
+                    typ = prod['type']
+                    reconnect = cvt_intrvl_str_to_us(prod['reconnect'])
+                    ports_per_dmn = len(endpoints) / len(smplr_dmns)
+                    ppd = ports_per_dmn
+                    try:
+                        for name in names:
+                            if ppd > 1:
+                                smplr_dmn = smplr_dmns[0]
+                                ppd -= 1
+                            else:
+                                smplr_dmn = smplr_dmns.pop(0)
+                                ppd = ports_per_dmn
+                            endpoint = endpoints.pop(0)
+                            prod = {
+                                'daemon'    : smplr_dmn,
+                                'dmn_grp'   : daemons,
+                                'name'      : name,
+                                'endpoint'  : endpoint,
+                                'type'      : typ,
+                                'group'     : group,
+                                'reconnect' : reconnect,
+                                'updaters'  : upd_spec
+                            }
+                            producers[group][endpoint] = prod
+                    except:
+                        print(f'Error building producer config:\n'\
+                              f'Please ensure "endpoints" is configured to the correct number of ports specified.')
         return producers
 
     def build_updaters(self, config):
