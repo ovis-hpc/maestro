@@ -161,7 +161,7 @@ class MaestroMonitor(object):
                 print(f'Could not connect to {agg}')
                 continue
             elif agg_state[group][agg] != 'ready':
-                print(f'{agg} not in READY state')
+                print(f'{agg} not ready, current state {agg_state[group][agg]}')
                 continue
             grp_aggs.append(agg)
         return grp_aggs
@@ -465,7 +465,7 @@ def config_samplers(comms, samplers, daemons):
             comm = comms[samplers[smplr_group]['daemons']][smplr]
             err, res = comm.daemon_status()
             if err:
-                print(f'Lost connectivity to {smplr} err {err}')
+                print(f'Lost connectivity to {smplr} err {err}: {res}')
                 return False
             print(f'Adding sampler plugins to sampler {smplr}')
             for plugin in samplers[smplr_group]['plugins']:
@@ -473,7 +473,7 @@ def config_samplers(comms, samplers, daemons):
                 if err == 17:
                     print(f'File exists: {rc}')
                 elif err != 0:
-                    print(f'Error {err} loading plugin {plugin["name"]}')
+                    print(f'Error {err} loading plugin {plugin["name"]}: {rc}')
                     continue
                 # Auto set producer_name/instance/component_id to default,
                 # then overwrite if specfied in config
@@ -520,7 +520,7 @@ def start_samplers(comms, samplers, daemons):
             comm = comms[samplers[smplr_group]['daemons']][smplr]
             err, res = comm.daemon_status()
             if err:
-                print(f'Lost connectivity to {smplr} err {err}')
+                print(f'Lost connectivity to {smplr} err {err}: {res}')
                 return False
             smplrs = comm.smplr_status()
             for plugin in samplers[smplr_group]['plugins']:
@@ -542,7 +542,7 @@ def stop_samplers(comms, samplers, daemons):
             comm = comms[samplers[smplr_group]['daemons']][smplr]
             err, res = comm.daemon_status()
             if err:
-                print(f'Lost connectivity to {smplr} err {err}')
+                print(f'Lost connectivity to {smplr} err {err}: {res}')
                 return False
             smplrs = comm.smplr_status()
             for plugn in smplrs[1]:
@@ -603,7 +603,7 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
             comm = comms[grp_name][agg_name]
             err, res = comm.prdcr_status()
             if err:
-                print(f'Lost connectivity to {agg_name} err {err}')
+                print(f'Lost connectivity to {agg_name} err {err}: {res}')
                 return False
             else:
                 agg_config = set({ prod['name'] for prod in res })
@@ -765,7 +765,7 @@ def start_producers(comms, groups, agg_state):
             # get the current state
             err, res = comm.prdcr_status()
             if err:
-                print(f'Error {err} querying state from aggregator {agg}')
+                print(f'Error {err} querying state from aggregator {agg}: Error {res}')
                 continue
             start_prods = list(prod['name'] for prod in res \
                 if prod['name'] in agg_prods)

@@ -173,8 +173,8 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
-            return errno.ENOTCONN, None
+        except Exception as e:
+            return errno.ENOTCONN, str(e)
 
     def listen(self, xprt, port, host=None, auth=None):
         """
@@ -203,7 +203,7 @@ class Communicator(object):
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
         except Exception as e:
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def dir_list(self):
         """
@@ -213,7 +213,7 @@ class Communicator(object):
             dlist = self.ldms.dir()
             return 0, dlist
         except Exception as e:
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def plugn_load(self, name):
         """
@@ -236,8 +236,8 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
-            return errno.ENOTCONN, None
+        except Exception as e:
+            return errno.ENOTCONN, str(e)
 
     def plugn_config(self, name, cfg_str):
         """
@@ -258,9 +258,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def plugn_stop(self, name):
         """
@@ -284,7 +284,7 @@ class Communicator(object):
             return resp['errcode'], resp['msg']
         except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def smplr_load(self, name):
         """
@@ -307,9 +307,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def smplr_status(self, name = None):
         """
@@ -332,9 +332,9 @@ class Communicator(object):
             req = LDMSD_Request(command_id=LDMSD_Request.PLUGN_STATUS, attrs=attrs)
             req.send(self)
             resp = req.receive(self)
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
         err = resp['errcode']
         if err == 0 and resp['msg'] is not None:
             status = json.loads(resp['msg'])
@@ -370,9 +370,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             err = resp['errcode']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
         if err == 0:
             status = json.loads(resp['msg'])
         else:
@@ -395,9 +395,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             err = resp['errcode']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
         if err == 0 and resp['msg'] is not None:
             status = json.loads(resp['msg'])
         else:
@@ -450,9 +450,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def prdcr_del(self, name):
         """
@@ -475,9 +475,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def prdcr_start(self, name, regex=True, reconnect=None):
         """
@@ -518,9 +518,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
 
     def prdcr_stop(self, name, regex=True):
@@ -556,9 +556,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def prdcr_subscribe(self, regex, stream):
         """
@@ -582,9 +582,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def prdcr_status(self, name = None):
         """
@@ -608,9 +608,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             err = resp['errcode']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
         if err == 0:
             status = json.loads(resp['msg'])
         else:
@@ -645,9 +645,9 @@ class Communicator(object):
         try:
             req.send(self)
             resp = req.receive(self)
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
         err = resp['errcode']
         if err == 0:
             status = json.loads(resp['msg'])
@@ -712,9 +712,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def updtr_del(self, name):
         """
@@ -737,9 +737,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def updtr_status(self, name=None):
         """
@@ -761,9 +761,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def updtr_start(self, name, interval=None, offset=None, auto=None):
         """
@@ -808,9 +808,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def updtr_stop(self, name):
         """
@@ -833,9 +833,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def updtr_prdcr_add(self, name, regex):
         """
@@ -861,9 +861,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def updtr_prdcr_del(self, name, regex):
         """
@@ -889,9 +889,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def updtr_match_add(self, name, regex, match='schema'):
         """
@@ -922,9 +922,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def updtr_match_del(self, name, regex, match='schema'):
         """
@@ -955,9 +955,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def updtr_match_list(self, name=None):
         """
@@ -978,9 +978,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def strgp_add(self, name, plugin, container, schema, perm=0o777, flush=None):
         """
@@ -1016,9 +1016,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def strgp_del(self, name):
         """
@@ -1041,9 +1041,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def strgp_start(self, name):
         """
@@ -1065,9 +1065,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def strgp_stop(self, name):
         """
@@ -1090,9 +1090,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def strgp_prdcr_add(self, name, regex):
         """
@@ -1118,9 +1118,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def strgp_prdcr_del(self, name, regex):
         """
@@ -1146,9 +1146,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def strgp_metric_add(self, name, metric_name):
         """
@@ -1174,9 +1174,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def strgp_metric_del(self, name, metric_name):
         """
@@ -1202,9 +1202,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def xprt_stats(self, reset=False):
         """Query the daemon's telemetry data"""
@@ -1218,9 +1218,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def thread_stats(self, reset=False):
         """Query the daemon's I/O thread utilization data"""
@@ -1234,9 +1234,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def daemon_status(self):
         """Query the daemon's status"""
@@ -1245,9 +1245,9 @@ class Communicator(object):
             req.send(self)
             resp = req.receive(self)
             return resp['errcode'], resp['msg']
-        except Exception:
+        except Exception as e:
             self.close()
-            return errno.ENOTCONN, None
+            return errno.ENOTCONN, str(e)
 
     def close(self):
         self.state = self.CLOSED
