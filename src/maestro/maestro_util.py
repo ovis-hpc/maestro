@@ -126,7 +126,7 @@ def NUM_STR(obj):
     return str(obj) if type(obj) in [ int, float ] else obj
 
 def expand_names(name_spec):
-    if type(name_spec) != str and isinstance(name_spec, collections.Sequence):
+    if type(name_spec) != str and isinstance(name_spec, collections.abc.Sequence):
         names = []
         for name in name_spec:
             names += hostlist.expand_hostlist(NUM_STR(name))
