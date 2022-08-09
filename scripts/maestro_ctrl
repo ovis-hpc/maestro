@@ -608,7 +608,7 @@ class ClusterCtrl(object):
         if subscribe:
             for stream in subscribe:
                 regex = check_opt('regex', stream)
-                if 'regex' is None:
+                if regex is None:
                     regex = '.*'
                 fd.write(f'prdcr_subscribe stream={stream["stream"]} '\
                          f'regex={regex}\n')
