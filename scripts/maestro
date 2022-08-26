@@ -672,7 +672,11 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                     print(f'Error {err}: getting {agg_name} current updater status')
                     print(f'{agg_name} has become unresponsive since last rebalance. Rebalancing...')
                     return 107
-                prdcr_updtr_status = json.loads(rc)
+                try:
+                    prdcr_updtr_status = json.loads(rc)
+                except Exception as e:
+                    print(f'Error: {e} parsing updtr status from {agg_name}')
+                    return 107
                 for updtr_ in prdcr_updtr_status:
                     if updtr_['name'] == agg_updtr and updtr_['state'] == 'RUNNING':
                         rc, err = comm.updtr_stop(agg_updtr)
