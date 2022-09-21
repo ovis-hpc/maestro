@@ -70,9 +70,6 @@ aggregators:
     subscribe : # Aggregator stream subscriptions
       - stream : kokkos-perf-data # Stream name
         regex : .* # Regular expression that matches producer names
-    plugins   :
-      - name   : kokkos_appmon_store
-        config : { path : /storage/eclipse/sos/ldms-data, stream : kokkos-perf-data }
 
 samplers:
   - daemons : *samplers

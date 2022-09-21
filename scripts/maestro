@@ -625,7 +625,7 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                         regex = stream['regex']
                     else:
                         regex = '.*'
-                    rc, err = comm.prdcr_subscribe(stream=stream['stream'], regex=regex)
+                    rc, err = comm.prdcr_subscribe(regex, stream['stream'])
                     if rc:
                         print(f'Error {rc} subscribing to stream {stream["stream"]}: {err}.')
             if auth is not None:
