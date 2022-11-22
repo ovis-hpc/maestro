@@ -154,8 +154,9 @@ class MaestroMonitor(object):
                               f'on port {ep["port"]} with transport {ep["xprt"]}')
                         print(f'{e}')
                         sys.exit()
-                    rc = comm.connect()
-                    if not rc:
+                    rc = comm.connect(timeout=args.timeout)
+                    if rc:
+                        print(f'Error: {rc}')
                         print(f'Failed to communicate with aggregator {dmn_name} on endpoint {ep["name"]}')
                     comms[dmn_grp][dmn_name] = comm
                     add_listeners(comm, dmn_name, listen)
@@ -213,8 +214,8 @@ class MaestroMonitor(object):
         config = {}
         try:
             kv_config = self.client.get_prefix(pfx)
-        except:
-            sys.exit('Unable to connect to etcd')
+        except Exception as e:
+            sys.exit(f'Unable to connect to etcd: {e}')
         for v, m in kv_config:
             path = m.key.decode('utf-8')
             s = path.split('/')
@@ -404,6 +405,7 @@ class MaestroMonitor(object):
         # Start the producers assigned to each of the Aggregators
         start_producers(self.comms, self.aggregators, agg_state)
         self.set_cfg_cntr()
+        stream_subscribe(self.comms, self.producers, self.aggregators, self.daemons, agg_state)
         return 0
 
     def __etcd_caller(self, event):
@@ -440,7 +442,7 @@ class MaestroMonitor(object):
                 comm = group[name]
                 if comm.state != comm.CONNECTED:
                     comm.close()
-                    comm.reconnect()
+                    comm.reconnect(timeout=args.timeout)
                 err, msg = comm.daemon_status()
                 if err == 0 and msg is not None:
                     state = msg['state']
@@ -449,6 +451,8 @@ class MaestroMonitor(object):
                         self.do_rebalance = True
                         comm.CFG_CNTR = ldmsd_cfg_cnt
                 else:
+                    print(f'Error getting daemon {name} status')
+                    print(f'Error {err}: {msg}')
                     state = 'disconnected'
                 ldmsd_state[grp_name][name] = state
         return ldmsd_state
@@ -499,7 +503,7 @@ def config_samplers(comms, samplers, daemons):
             comm = comms[samplers[smplr_group]['daemons']][smplr]
             err, res = comm.daemon_status()
             if err:
-                print(f'Lost connectivity to {smplr} err {err}: {res}')
+                print(f'config_samplers: lost connectivity to {smplr} err {err}: {res}')
                 return False
             print(f'Adding sampler plugins to sampler {smplr}')
             for plugin in samplers[smplr_group]['plugins']:
@@ -554,7 +558,7 @@ def start_samplers(comms, samplers, daemons):
             comm = comms[samplers[smplr_group]['daemons']][smplr]
             err, res = comm.daemon_status()
             if err:
-                print(f'Lost connectivity to {smplr} err {err}: {res}')
+                print(f'start_samplers: lost connectivity to {smplr} err {err}: {res}')
                 return False
             smplrs = comm.smplr_status()
             for plugin in samplers[smplr_group]['plugins']:
@@ -576,7 +580,7 @@ def stop_samplers(comms, samplers, daemons):
             comm = comms[samplers[smplr_group]['daemons']][smplr]
             err, res = comm.daemon_status()
             if err:
-                print(f'Lost connectivity to {smplr} err {err}: {res}')
+                print(f'stop_samplers: lost connectivity to {smplr} err {err}: {res}')
                 return False
             smplrs = comm.smplr_status()
             for plugn in smplrs[1]:
@@ -637,7 +641,7 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
             comm = comms[grp_name][agg_name]
             err, res = comm.prdcr_status()
             if err:
-                print(f'Lost connectivity to {agg_name} err {err}: {res}')
+                print(f'add_producers: lost connectivity to {agg_name} err {err}: {res}')
                 return False
             else:
                 agg_config = set({ prod['name'] for prod in res })
@@ -652,16 +656,6 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                 auth_opt = check_opt('conf', endpoints[dmn_grp][dmn]['endpoints'][ep])
                 plugin = check_opt('plugin', endpoints[dmn_grp][dmn]['endpoints'][ep]['auth'])
 
-            subscribe = check_opt('subscribe', aggregators[grp_name][agg_name])
-            if subscribe is not None:
-                for stream in subscribe:
-                    if 'regex' in stream:
-                        regex = stream['regex']
-                    else:
-                        regex = '.*'
-                    rc, err = comm.prdcr_subscribe(regex, stream['stream'])
-                    if rc:
-                        print(f'Error {rc} subscribing to stream {stream["stream"]}: {err}.')
             if auth is not None:
                 rc, msg = comm.auth_add(auth, plugin, auth_opt)
                 if rc:
@@ -701,12 +695,16 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                 comm = comms[grp_name][agg_name]
                 # the updater may already exist, in which case the add will fail
                 offset = check_opt('offset', updtr)
-                err, rc = comm.updtr_status()
-                if rc is None:
+                rc, msg = comm.updtr_status()
+                if msg is None:
                     print(f'Error {err}: getting {agg_name} current updater status')
                     print(f'{agg_name} has become unresponsive since last rebalance. Rebalancing...')
                     return 107
-                prdcr_updtr_status = json.loads(rc)
+                try:
+                    prdcr_updtr_status = msg
+                except Exception as e:
+                    print(f'Error {e}: loading response {msg} as prdcr updater status from {agg_name}')
+                    return 74
                 for updtr_ in prdcr_updtr_status:
                     if updtr_['name'] == agg_updtr and updtr_['state'] == 'RUNNING':
                         rc, err = comm.updtr_stop(agg_updtr)
@@ -814,6 +812,34 @@ def start_producers(comms, groups, agg_state):
             if len(start_prods) > 0:
                 print(f'Starting agg {agg} {len(start_prods)} producers')
 
+def stream_subscribe(comms, producers, aggregators, endpoints, agg_state):
+    """
+    Subscribe to streams.
+    """
+    for grp_name in producers:
+        grp_prods = set([ prod for prod in producers[grp_name]])
+        prod_dict = producers[grp_name]
+        # Query the producer list on each aggregator in the group
+        for agg_name, agg_host in agg_hosts(grp_name, aggregators, endpoints):
+            if agg_state[grp_name][agg_name] != 'ready':
+                continue
+            comm = comms[grp_name][agg_name]
+            err, res = comm.prdcr_status()
+            if err:
+                print(f'stream_subscribe: lost connectivity to {agg_name} err {err}: {res}')
+                return False
+
+            subscribe = check_opt('subscribe', aggregators[grp_name][agg_name])
+            if subscribe is not None:
+                for stream in subscribe:
+                    if 'regex' in stream:
+                        regex = stream['regex']
+                    else:
+                        regex = '.*'
+                    rc, err = comm.prdcr_subscribe(regex, stream['stream'])
+                    if rc:
+                        print(f'Error {rc} subscribing to stream {stream["stream"]}: {err}.')
+
 RAFT_STATE_TBL = {
         0: "FOLLOWER",
         1: "CANDIDATE",
@@ -832,13 +858,16 @@ if __name__ == "__main__":
                         help='Specify "producers" to balance producers across aggregators,\n'\
                              'or "sets" to balance metric sets across aggregators.\n'\
                              'Defaults to "producers"')
-    parser.add_argument("--dump", action="store_true",
-                        help="Dump the load-balanced aggregation configuration files")
+    #parser.add_argument("--dump", action="store_true",
+    #                    help="Dump the load-balanced aggregation configuration files")
+
     parser.add_argument("--prefix", metavar="STRING", required=True,
-                        help="The prefix for the dumped aggregator configurations",
+                        help="The prefix for the ldms cluster configurations",
                         default="unknown")
     parser.add_argument("--start-aggregators", action='store_true',
                         help="Start ldms aggregator daemon's")
+    parser.add_argument("--timeout", metavar="INT", required=False, type=int,
+                        default=15)
     parser.add_argument("--version", metavar="VERSION",
                         help="The OVIS version for the output syntax (4 or 5), default is 4",
                         default=4)

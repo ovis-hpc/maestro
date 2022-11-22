@@ -49,8 +49,10 @@ import os
 from ovis_ldms import ldms
 from ldmsd.ldmsd_request import LDMSD_Request, LDMSD_Req_Attr
 from .maestro_util import cvt_intrvl_str_to_us, check_offset
+import time
 import json
 import errno
+
 """
 @module Communicator
 """
@@ -105,26 +107,29 @@ class Communicator(object):
                f"xprt = {self.xprt}, state = {self.state}, "\
                f"max_recv_len = {self.max_recv_len}>"
 
-    def reconnect(self):
+    def reconnect(self, timeout=0):
         if self.ldms:
             self.close()
         self.ldms = ldms.Xprt(name=self.xprt, auth=self.auth, auth_opts=self.auth_opt)
         if self.ldms is None:
-            return False
+            print(f'ldms.Xprt is None')
+            return -1
         self.max_recv_len = self.ldms.msg_max
-        return self.connect()
+        return self.connect(timeout=timeout)
 
-    def connect(self):
+    def connect(self, timeout=0):
         try:
-            self.ldms.connect(self.host, self.port)
-        except:
-            return False
-        self.type = "inband"
+            self.ldms.connect(self.host, self.port, timeout=timeout)
+        except Exception as e:
+            print(f'Error {e}: connecting to {self.host} on port {self.port}')
+            self.state = self.CLOSED
+            return errno.ENOTCONN
+        self.type = 'inband'
         self.state = self.CONNECTED
         rc, self.CFG_CNTR = self.getCfgCntr()
         if not rc:
             self.CFG_CNTR = int(self.CFG_CNTR)
-        return True
+        return 0
 
     def getState(self):
         return self.state
@@ -775,7 +780,7 @@ class Communicator(object):
         try:
             req.send(self)
             resp = req.receive(self)
-            return resp['errcode'], resp['msg']
+            return resp['errcode'], json.loads(resp['msg'])
         except Exception as e:
             self.close()
             return errno.ENOTCONN, str(e)
