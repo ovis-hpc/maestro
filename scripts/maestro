@@ -119,6 +119,16 @@ class MaestroMonitor(object):
         else:
             self.samplers = {}
 
+    def set_cfg_cntr(self):
+        for grp_name in self.comms:
+            for name in self.comms[grp_name]:
+                try:
+                    rc, ldmsd_cfg_cntr = self.comms[grp_name][name].getCfgCntr()
+                except Exception as e:
+                    print(f'Bad config counter request: {e}')
+                    ldmsd_cfg_cntr = 0
+                self.comms[grp_name][name].CFG_CNTR = ldmsd_cfg_cntr
+
     def build_comms(self):
         comms = {}
         for dmn_grp in self.daemons:
@@ -393,6 +403,7 @@ class MaestroMonitor(object):
         add_stores(self.comms, self.stores, self.aggregators, self.daemons, agg_state)
         # Start the producers assigned to each of the Aggregators
         start_producers(self.comms, self.aggregators, agg_state)
+        self.set_cfg_cntr()
         return 0
 
     def __etcd_caller(self, event):
@@ -419,6 +430,29 @@ class MaestroMonitor(object):
             a, b, c = sys.exc_info()
             print(str(e) + ' ' + str(c.tb_lineno)+'\n')
 
+    def query_ldmsd_state(self):
+        ldmsd_state = {}
+        for grp_name in self.comms:
+            group = self.comms[grp_name]
+            for name in group:
+                if grp_name not in ldmsd_state:
+                    ldmsd_state[grp_name] = {}
+                comm = group[name]
+                if comm.state != comm.CONNECTED:
+                    comm.close()
+                    comm.reconnect()
+                err, msg = comm.daemon_status()
+                if err == 0 and msg is not None:
+                    state = msg['state']
+                    rc, ldmsd_cfg_cnt = comm.getCfgCntr()
+                    if not rc and ldmsd_cfg_cnt != comm.CFG_CNTR:
+                        self.do_rebalance = True
+                        comm.CFG_CNTR = ldmsd_cfg_cnt
+                else:
+                    state = 'disconnected'
+                ldmsd_state[grp_name][name] = state
+        return ldmsd_state
+
     def cluster_monitor(self):
         last_state = {}
         pfx = '/'+self.prefix
@@ -433,7 +467,7 @@ class MaestroMonitor(object):
                     # NOTE: cond.wait() releases self.lock and blocking waits.
                     #       self.lock is re-acquired when cond.wait() returns.
 
-            ldmsd_state = query_ldmsd_state(self.client, self.comms)
+            ldmsd_state = self.query_ldmsd_state()
             rebalance_aggs = {}
             agg_str = ''
             for group in ldmsd_state:
@@ -779,26 +813,6 @@ def start_producers(comms, groups, agg_state):
                 comm.prdcr_start(prod_name, regex=False)
             if len(start_prods) > 0:
                 print(f'Starting agg {agg} {len(start_prods)} producers')
-
-def query_ldmsd_state(client, comms):
-    ldmsd_state = {}
-    for grp_name in comms:
-        group = comms[grp_name]
-        for name in group:
-            if grp_name not in ldmsd_state:
-                ldmsd_state[grp_name] = {}
-            comm = group[name]
-            if comm.state != comm.CONNECTED:
-                comm.close()
-                comm.reconnect()
-            err, msg = comm.daemon_status()
-            if err == 0 and msg is not None:
-                res = json.loads(msg)
-                state = res['state']
-            else:
-                state = 'stopped'
-            ldmsd_state[grp_name][name] = state
-    return ldmsd_state
 
 RAFT_STATE_TBL = {
         0: "FOLLOWER",

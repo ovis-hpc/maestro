@@ -63,6 +63,7 @@ class Communicator(object):
     CONNECTED   = 2
     CLOSED      = 3
     CTRL_STATES = [ INIT, CONNECTED, CLOSED ]
+    CFG_CNTR = 0
 
     def __init__(self, xprt, host, port, auth=None, auth_opt=None):
         """Create a communicator interface with an LDMS Daemon (LDMSD)
@@ -120,6 +121,9 @@ class Communicator(object):
             return False
         self.type = "inband"
         self.state = self.CONNECTED
+        rc, self.CFG_CNTR = self.getCfgCntr()
+        if not rc:
+            self.CFG_CNTR = int(self.CFG_CNTR)
         return True
 
     def getState(self):
@@ -133,6 +137,17 @@ class Communicator(object):
 
     def getPort(self):
         return self.port
+
+    def getCfgCntr(self):
+        req = LDMSD_Request(command_id=LDMSD_Request.CFG_CNTR)
+        try:
+            req.send(self)
+            resp = req.receive(self)
+            if resp['errcode']:
+                return resp['errcode'], 0
+            return resp['errcode'], int(resp['msg'])
+        except Exception as e:
+            return errno.ENOTCONN, str(e)
 
     def send_command(self, cmd):
         """This is called by the LDMSRequest class to send a message"""
@@ -1244,7 +1259,12 @@ class Communicator(object):
         try:
             req.send(self)
             resp = req.receive(self)
-            return resp['errcode'], resp['msg']
+            err = resp['errcode']
+            if err == 0 and resp['msg'] is not None:
+                status = json.loads(resp['msg'])
+            else:
+                status = None
+            return err, status
         except Exception as e:
             self.close()
             return errno.ENOTCONN, str(e)
