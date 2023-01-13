@@ -90,14 +90,6 @@ def cvt_intrvl_str_to_us(interval_s):
         raise ValueError(f"{interval_s} is not a valid time-interval string")
     return int(mult * factor)
 
-def check_offset(interval_us, offset_us=None):
-    if offset_us:
-        interval_us = int(interval_us)
-        offset_us = int(offset_us)
-        if offset_us/interval_us > .5:
-            offset_us = interval_us/2
-    return offset_us
-
 def check_opt(attr, spec):
     # Check for optional argument and return None if not present
     if attr in AUTH_ATTRS:
