@@ -11,7 +11,7 @@ import time
 import re
 import socket
 import logging
-from maestro.Communicator import Communicator
+from ldmsd.ldmsd_communicator import Communicator
 from maestro.maestro_util import *
 
 def agg_hosts(grp_name, aggs, daemons):
@@ -682,7 +682,7 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
     """
     Add updaters to Aggregators
     """
-    rc = True
+    rc = 0
     for grp_name in updaters:
         grp_updaters = updaters[grp_name]
         group = aggregators[grp_name]
@@ -742,7 +742,7 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                 err, msg = comm.updtr_start(agg_updtr)
                 if err != 0 and err != errno.EBUSY:
                     print(f'Error {err} : {msg} starting {updtr_name}')
-                    rc = False
+                    rc = 1
     return rc
 
 def add_stores(comms, stores, aggregators, daemons, agg_state):
