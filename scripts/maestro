@@ -11,7 +11,7 @@ import time
 import re
 import socket
 import logging
-from ldmsd.ldmsd_communicator import Communicator
+from ldmsd.ldmsd_communicator import Communicator, fmt_status
 from maestro.maestro_util import *
 
 def agg_hosts(grp_name, aggs, daemons):
@@ -190,6 +190,7 @@ class MaestroMonitor(object):
                     print(f'Unable to connect to ldms daemon {sampler}')
                     continue
                 rc, msg = self.comms[dmn_grp][sampler].smplr_status()
+                msg = fmt_status(msg)
                 if rc:
                     if msg is None:
                         print(f'Error {rc}: {sampler} status returned None')
@@ -445,6 +446,7 @@ class MaestroMonitor(object):
                     comm.reconnect(timeout=args.timeout)
                 err, msg = comm.daemon_status()
                 if err == 0 and msg is not None:
+                    msg = fmt_status(msg)
                     state = msg['state']
                     rc, ldmsd_cfg_cnt = comm.getCfgCntr()
                     if not rc and ldmsd_cfg_cnt != comm.CFG_CNTR:
@@ -640,11 +642,12 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                 continue
             comm = comms[grp_name][agg_name]
             err, res = comm.prdcr_status()
+            prdcrs = fmt_status(res)
             if err:
-                print(f'add_producers: lost connectivity to {agg_name} err {err}: {res}')
+                print(f'add_producers: lost connectivity to {agg_name} err {err}: {prdcrs}')
                 return False
             else:
-                agg_config = set({ prod['name'] for prod in res })
+                agg_config = set({ prod['name'] for prod in prdcrs })
             add_prods = grp_prods - agg_config
             auth = None
             if len(add_prods) > 0:
@@ -701,7 +704,7 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                     print(f'{agg_name} has become unresponsive since last rebalance. Rebalancing...')
                     return 107
                 try:
-                    prdcr_updtr_status = msg
+                    prdcr_updtr_status = fmt_status(msg)
                 except Exception as e:
                     print(f'Error {e}: loading response {msg} as prdcr updater status from {agg_name}')
                     return 74
@@ -796,6 +799,7 @@ def start_producers(comms, groups, agg_state):
 
             # get the current state
             err, res = comm.prdcr_status()
+            res = fmt_status(res)
             if err:
                 print(f'Error {err} querying state from aggregator {agg}: Error {res}')
                 continue
