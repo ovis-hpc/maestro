@@ -405,8 +405,8 @@ class MaestroMonitor(object):
         add_stores(self.comms, self.stores, self.aggregators, self.daemons, agg_state)
         # Start the producers assigned to each of the Aggregators
         start_producers(self.comms, self.aggregators, agg_state)
-        self.set_cfg_cntr()
         stream_subscribe(self.comms, self.producers, self.aggregators, self.daemons, agg_state)
+        self.set_cfg_cntr()
         return 0
 
     def __etcd_caller(self, event):
