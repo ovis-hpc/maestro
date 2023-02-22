@@ -699,15 +699,15 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                 # the updater may already exist, in which case the add will fail
                 offset = check_opt('offset', updtr)
                 rc, msg = comm.updtr_status()
-                if msg is None:
-                    print(f'Error {err}: getting {agg_name} current updater status')
-                    print(f'{agg_name} has become unresponsive since last rebalance. Rebalancing...')
-                    return 107
                 try:
                     prdcr_updtr_status = fmt_status(msg)
                 except Exception as e:
                     print(f'Error {e}: loading response {msg} as prdcr updater status from {agg_name}')
                     return 74
+                if prdcr_updtr_status is None:
+                    print(f'Error {err}: getting {agg_name} current updater status')
+                    print(f'{agg_name} has become unresponsive since last rebalance. Rebalancing...')
+                    return 107
                 for updtr_ in prdcr_updtr_status:
                     if updtr_['name'] == agg_updtr and updtr_['state'] == 'RUNNING':
                         rc, err = comm.updtr_stop(agg_updtr)
