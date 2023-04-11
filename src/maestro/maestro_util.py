@@ -130,7 +130,7 @@ def parse_to_cfg_str(cfg_obj):
     cfg_str = ''
     for key in cfg_obj:
         if key not in INT_ATTRS:
-            if len(cfg_str) > 8:
+            if len(cfg_str) > 1:
                 cfg_str += ' '
             cfg_str += key + '=' + str(cfg_obj[key])
     return cfg_str
