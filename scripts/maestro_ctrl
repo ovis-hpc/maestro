@@ -780,7 +780,7 @@ if __name__ == "__main__":
         if rc:
             print("Error saving ldms cluster configuration to etcd cluster.")
             sys.exit(0)
-        print("LDMS aggregator configuration saved to etcd cluster.")
+        print("LDMS cluster configuration saved to etcd cluster.")
 
     if not args.cluster and not args.prefix and not args.local and not args.generate_config_path:
         print(f'No action detected. Exiting...')
