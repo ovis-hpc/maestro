@@ -317,6 +317,8 @@ class MaestroMonitor(object):
                 if rc or dlist is None:
                 # Don't inclue sets in group set count if sampler returns error
                     continue
+                if len(dlist) == 0:
+                    self.do_rebalance = True
                 smplr_set_size = 0
                 all_sets[group]['prdcrs'][self.producers[group][prdcr]['name']] = {}
                 all_sets[group]['prdcrs'][self.producers[group][prdcr]['name']]['sets'] = {}
@@ -378,6 +380,7 @@ class MaestroMonitor(object):
                 remainder = self.balance_remainder(group, grp_aggs, grp_sets, remainder)
 
     def rebalance(self, agg_state):
+        self.do_rebalance = False
         self.reset_conf()
         # Start samplers if configured with maestro
         cfg_sampler_eps = self.check_samplers()
@@ -400,12 +403,13 @@ class MaestroMonitor(object):
         # Add all the updaters and storage policies
         rc = add_updaters(self.comms, self.updaters, self.aggregators, self.daemons, agg_state, rb=self.args.rebalance)
         if rc:
-            self.do_balance=True
+            self.do_rebalance=True
             return 1
         add_stores(self.comms, self.stores, self.aggregators, self.daemons, agg_state)
         # Start the producers assigned to each of the Aggregators
         start_producers(self.comms, self.aggregators, agg_state)
         stream_subscribe(self.comms, self.producers, self.aggregators, self.daemons, agg_state)
+        time.sleep(3)
         self.set_cfg_cntr()
         return 0
 
@@ -436,6 +440,8 @@ class MaestroMonitor(object):
     def query_ldmsd_state(self):
         ldmsd_state = {}
         for grp_name in self.comms:
+            if grp_name == 'samplers':
+                continue
             group = self.comms[grp_name]
             for name in group:
                 if grp_name not in ldmsd_state:
@@ -474,8 +480,6 @@ class MaestroMonitor(object):
                     #       self.lock is re-acquired when cond.wait() returns.
 
             ldmsd_state = self.query_ldmsd_state()
-            rebalance_aggs = {}
-            agg_str = ''
             for group in ldmsd_state:
                 # Updated configuration, do full rebalance
                 if group not in last_state:
@@ -491,8 +495,8 @@ class MaestroMonitor(object):
             if self.do_rebalance:
                 print('Rebalance cluster...')
                 rc = self.rebalance(ldmsd_state)
-                self.do_rebalance = False
-                print('Finished load balancing.')
+                if not self.do_rebalance:
+                    print('Finished load balancing.')
             self.lock.release()
             time.sleep(1)
 
