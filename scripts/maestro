@@ -439,9 +439,7 @@ class MaestroMonitor(object):
 
     def query_ldmsd_state(self):
         ldmsd_state = {}
-        for grp_name in self.comms:
-            if grp_name == 'samplers':
-                continue
+        for grp_name in self.aggregators:
             group = self.comms[grp_name]
             for name in group:
                 if grp_name not in ldmsd_state:
@@ -498,7 +496,7 @@ class MaestroMonitor(object):
                 if not self.do_rebalance:
                     print('Finished load balancing.')
             self.lock.release()
-            time.sleep(1)
+            time.sleep(self.args.timeout)
 
 def config_samplers(comms, samplers, daemons):
     """Configure and load plugins for sampler daemons"""
