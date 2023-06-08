@@ -257,7 +257,7 @@ class MaestroMonitor(object):
     def __reconf_producers(self, config):
         pass
 
-    def __reconf_samplers(self):
+    def __reconf_samplers(self, config):
         self.res_samplers = True
 
     def __reconf_stores(self, config):
@@ -428,7 +428,7 @@ class MaestroMonitor(object):
                 if conf == 'last_updated':
                     continue
                 if config[self.prefix][conf] != self.config[self.prefix][conf]:
-                    self.etcd_event_handler[conf]()
+                    self.etcd_event_handler[conf](config)
                     self.do_rebalance = True
                     break
             self.config = config
