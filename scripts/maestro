@@ -493,6 +493,11 @@ class MaestroMonitor(object):
             if self.do_rebalance:
                 print('Rebalance cluster...')
                 rc = self.rebalance(ldmsd_state)
+                if self.args.rebalance == 'sets':
+                    n = len(self.aggregators) - 1
+                    while n > 0:
+                        self.rebalance(ldmsd_state)
+                        n -= 1
                 if not self.do_rebalance:
                     print('Finished load balancing.')
             self.lock.release()
