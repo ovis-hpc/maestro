@@ -884,7 +884,13 @@ if __name__ == "__main__":
                         default=4)
     parser.add_argument("--log-level", default="info",
                         help="Log level (debug, info, warn, error, fatal)")
+    parser.add_argument("--debug", action='store_true',
+                        help="Enable debug information")
+    parser.set_defaults(debug=False)
     args = parser.parse_args()
+    if not args.debug:
+        import sys
+        sys.tracebacklimit=0
     LOG_LEVEL_TBL = dict(
                 DEBUG    = logging.DEBUG,
                 INFO     = logging.INFO,
