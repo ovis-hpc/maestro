@@ -98,7 +98,7 @@ class ClusterCtrl(object):
             sys.exit()
         for spec in node_config:
             check_required([ 'names', 'endpoints', 'hosts' ],
-                           spec, "daemons specification")
+                           spec, '"daemons" entry')
             hosts = expand_names(spec['hosts'])
             dnames = expand_names(spec['names'])
             hostnames = hosts
@@ -121,7 +121,7 @@ class ClusterCtrl(object):
                 sys.exit()
             for endpoints in spec['endpoints']:
                 check_required(['names','ports'],
-                               endpoints, 'endpoint specification')
+                               endpoints, '"endpoints" entry')
                 cur_epnames = expand_names(endpoints['names'])
                 ep_names.append(cur_epnames)
                 cur_ports = expand_names(endpoints['ports'])
@@ -170,7 +170,7 @@ class ClusterCtrl(object):
             return aggregators
         for agg_spec in agg_conf:
             check_required([ 'daemons' ],
-                           agg_spec, "aggregator specification")
+                           agg_spec, '"aggregators" entry')
             names = expand_names(agg_spec['daemons'])
             group = agg_spec['daemons']
             plugins = check_opt('plugins', agg_spec)
@@ -214,7 +214,7 @@ class ClusterCtrl(object):
             for prod in agg['peers']:
                 check_required([ 'endpoints', 'updaters',
                                  'reconnect', 'type', ],
-                               prod, '"producer" entry')
+                               prod, '"peers" entry')
                 # Use endpoints for producer names and remove names attribute?
                 if prod['daemons'] not in self.daemons:
                     dmn_grps = prod['daemons'].split(',')
@@ -284,7 +284,7 @@ class ClusterCtrl(object):
                     continue
                 for updtr_spec in prod['updaters']:
                     check_required([ 'interval', 'sets', ],
-                                   updtr_spec, '"updater" entry')
+                                   updtr_spec, '"updaters" entry')
                     group = agg['daemons']
                     if group not in updaters:
                         updaters[group] = {}
@@ -345,12 +345,14 @@ class ClusterCtrl(object):
             grp_stores = stores[group]
             store_name = store_spec['name']
             if store_name in grp_stores:
-                raise ValueError(f"Duplicate store name '{store_name}''. "
+                raise ValueError(f"Duplicate store name '{store_name}'. "
                             "A store name must be unique within the group")
-            check_required(['name', 'config'],
+
+            check_required([ 'name' ],
                            store_spec['plugin'],
                            '"store plugin" entry')
             check_opt('flush', store_spec)
+            store_spec['plugin'] = check_plugin_config(store_spec['plugin'])
             grp_stores[store_name] = store_spec
         return stores
 
@@ -382,7 +384,8 @@ class ClusterCtrl(object):
             check_required([ 'daemons', 'plugins' ],
                            smplr_spec, '"sampler" entry')
             for plugin in smplr_spec['plugins']:
-                check_required(['name'], plugin, 'plugin entry')
+                check_required(['name'], plugin, '"plugins" entry')
+                plugin = check_plugin_config(plugin)
             smplrs[smplr_spec['daemons']] = smplr_spec
         return smplrs
 
@@ -396,8 +399,9 @@ class ClusterCtrl(object):
             return None
         plugins = {}
         for plugn_spec in config['plugins']:
-            check_required([ 'name', 'config' ],
+            check_required([ 'name', ],
                            plugn_spec, '"plugin" entry')
+            plugn_spec = check_plugin_config(plugn_spec)
             group = plugn_spec['daemons']
             if group not in plugins:
                 plugins[group] = {}
@@ -605,16 +609,6 @@ class ClusterCtrl(object):
             offset = check_opt('offset', sampler)
             self.write_opt_attr(fd, 'offset', offset)
 
-    def write_sampler_plugins(self, group_name):
-        if self.plugins != None:
-            if group_name in self.plugins:
-                fd = open(f'{path}/{group_name}-samplers.conf', 'w+')
-                for plugin in self.plugins[group_name]:
-                    cfg_str = parse_to_cfg_str(self.plugins[group_name][plugin]['config'])
-                    fd.write(f'load name={plugin}\n')
-                    fd.write(f'config name={plugin} {cfg_str}\n\n')
-                fd.close()
-
     def write_stream_subscribe(self, fd, group_name, agg):
         subscribe = check_opt('subscribe', self.aggregators[group_name][agg])
         if subscribe:
@@ -707,7 +701,6 @@ class ClusterCtrl(object):
             # Sampler config
             if self.samplers != None:
                 try:
-                    self.write_sampler_plugins(group_name)
                     # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
                     if group_name in self.samplers:
                         fd = open(f'{path}/{group_name}-samplers.conf', 'w+')

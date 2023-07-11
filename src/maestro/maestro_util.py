@@ -69,7 +69,7 @@ def check_intrvl_str(interval_s):
                 f"'1h'   - 1 hour\n"\
                 f"'1d'   - 1 day\n"\
                 f"\n"
-    if type(interval_s) == int:
+    if type(interval_s) == int or type(interval_s) == float:
         return interval_s
     if type(interval_s) != str:
         raise ValueError(f"{error_str}")
@@ -82,10 +82,10 @@ def check_intrvl_str(interval_s):
     else:
         ival_s = interval_s
     try:
-        mult = float(ival_s)
+        ival_s = float(ival_s) * unit_strs[unit]
     except Exception as e:
         raise ValueError(f"{interval_s} is not a valid time-interval string")
-    return interval_s
+    return ival_s
 
 def check_opt(attr, spec):
     # Check for optional argument and return None if not present
@@ -136,6 +136,15 @@ def expand_names(name_spec):
     else:
         names = hostlist.expand_hostlist(NUM_STR(name_spec))
     return names
+
+def check_plugin_config(plugin):
+    check_required(['config'], plugin, '"plugin" entry')
+    if type(plugin['config']) is not list:
+        raise ValueError('"config" must be a list of configuration commands')
+    for cfg in plugin['config']:
+        if type(cfg) is not dict and type(cfg) is not str:
+            raise ValueError('"config" list members must be a dictionary or a string')
+    return plugin
 
 def parse_to_cfg_str(cfg_obj):
     cfg_str = ''
