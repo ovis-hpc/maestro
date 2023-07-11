@@ -524,19 +524,23 @@ def config_samplers(comms, samplers, daemons):
                     continue
                 # Auto set producer_name/instance/component_id to default,
                 # then overwrite if specfied in config
-                cfg_args = { 'producer'     : smplr,
-                             'instance'     : smplr +'/'+plugin['name'],
-                             'component_id' : '${LDMS_COMPONENT_ID}' }
-                for attr in plugin['config']:
-                    if attr == 'name' or attr == 'interval':
+                for cfg_ in plugin['config']:
+                    if type(cfg_) is dict:
+                        cfg_args = { 'producer'     : smplr,
+                                     'instance'     : smplr +'/'+plugin['name'],
+                                     'component_id' : '${LDMS_COMPONENT_ID}' }
+                        # Set component_id to default env variable if not specified
+                        for attr in cfg_:
+                            if attr == 'name' or attr == 'interval':
+                                continue
+                            cfg_args[attr] = cfg_[attr]
+                        cfg_str = parse_to_cfg_str(cfg_args)
+                    else:
+                        cfg_str = cfg_
+                    err, msg = comm.plugn_config(plugin['name'], cfg_str)
+                    if err:
+                        print(f'Error: {err} {msg} configuring {smplr}')
                         continue
-                    cfg_args[attr] = plugin['config'][attr]
-                # Set component_id to default env variable if not specified
-                cfg_str = parse_to_cfg_str(cfg_args)
-                err, msg = comm.plugn_config(plugin['name'], cfg_str)
-                if err:
-                    print(f'Error: {err} {msg} configuring {smplr}')
-                    continue
     return True
 
 def start_agg_daemons(aggregators, start_aggs):
@@ -772,8 +776,14 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
                 plugin = store['plugin']
                 plugin_name = plugin['name']
                 err, res = comm.plugn_load(plugin_name)
-                cfg_str = parse_to_cfg_str(plugin['config'])
-                err, res = comm.plugn_config(plugin_name, cfg_str)
+                for cfg_ in plugin['config']:
+                    if type(cfg_) is dict:
+                        cfg_str = parse_to_cfg_str(cfg_)
+                    else:
+                        cfg_str = cfg_
+                    err, msg = comm.plugn_config(plugin['name'], cfg_str)
+
+                flush = check_opt('flush', store)
                 ## the stores may already exist, in which case the add will fail
                 err, res = comm.strgp_add(**store_args)
                 if err:
