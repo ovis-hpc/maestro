@@ -137,6 +137,15 @@ def expand_names(name_spec):
         names = hostlist.expand_hostlist(NUM_STR(name_spec))
     return names
 
+def check_plugin_config(plugin):
+    check_required(['config'], plugin, '"plugin" entry')
+    if type(plugin['config']) is not list:
+        raise ValueError('"config" must be a list of configuration commands')
+    for cfg in plugin['config']:
+        if type(cfg) is not dict and type(cfg) is not str:
+            raise ValueError('"config" list members must be a dictionary or a string')
+    return plugin
+
 def parse_to_cfg_str(cfg_obj):
     cfg_str = ''
     for key in cfg_obj:
