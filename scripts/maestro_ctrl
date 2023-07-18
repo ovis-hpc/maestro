@@ -183,6 +183,9 @@ class ClusterCtrl(object):
             if group not in aggregators:
                 aggregators[group] = {}
             subscribe = check_opt('subscribe', agg_spec)
+            if subscribe:
+                for stream in subscribe:
+                    check_required([ 'stream', 'regex' ], stream, "stream specification")
             for name in names:
                 aggregators[group][name] = { 'state' : 'stopped' } # 'running', 'error'
                 if subscribe:
@@ -325,8 +328,16 @@ class ClusterCtrl(object):
             print(f'         ...       : ...')
             return None
         for store_spec in config['stores']:
-            check_required([ 'name', 'plugin', 'container', 'schema' ],
+            check_required([ 'name', 'plugin', 'container' ],
                            store_spec, '"store" entry')
+            decomp = check_opt('decomposition', store_spec)
+            if not decomp:
+                check_required(['schema'], store_spec, '"store" entry')
+            schema = check_opt('schema', store_spec)
+            regex = check_opt('regex', store_spec)
+            if decomp and not schema and not regex:
+                raise ValueError("Decomposition plugin configuration requires either"
+                                 " 'schema' or 'regex' attribute'")
             group = store_spec['daemons']
             if group not in stores:
                 stores[group] = {}
@@ -335,8 +346,7 @@ class ClusterCtrl(object):
             if store_name in grp_stores:
                 raise ValueError(f"Duplicate store name '{store_name}''. "
                             "A store name must be unique within the group")
-
-            check_required([ 'name', 'config'],
+            check_required(['name', 'config'],
                            store_spec['plugin'],
                            '"store plugin" entry')
             grp_stores[store_name] = store_spec
