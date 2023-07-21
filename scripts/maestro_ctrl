@@ -372,12 +372,12 @@ class ClusterCtrl(object):
             print(f'         plugins :')
             print(f'           - name        : meminfo')
             print(f'             interval    : "1.0s"')
-            print(f'              offset      : "0s"')
-            print(f'              config :')
-            print(f'                schema : meminfo')
-            print(f'                component_id : "10001"')
-            print(f'                producer : "node-1"')
-            print(f'                perm : "0777"')
+            print(f'             offset      : "0s"')
+            print(f'             config :')
+            print(f'               - schema : meminfo')
+            print(f'                 component_id : "10001"')
+            print(f'                 producer : "node-1"')
+            print(f'                 perm : "0777"')
             return None
         for smplr_spec in config['samplers']:
             check_required([ 'daemons', 'plugins' ],
@@ -412,11 +412,12 @@ class ClusterCtrl(object):
             grp_plugins[plugin_name] = plugn_spec
         return plugins
 
-    def __init__(self, client, name, cluster_config):
+    def __init__(self, client, name, cluster_config, args):
         """
         """
         self.client = client
         self.name = name
+        self.args = args
         self.cluster_config = cluster_config
         self.daemons = self.build_daemons(cluster_config)
         self.aggregators = self.build_aggregators(cluster_config)
@@ -590,20 +591,29 @@ class ClusterCtrl(object):
 
     def write_samplers(self, fd, smplr_group):
         for sampler in self.samplers[smplr_group]['plugins']:
-            hostname = socket.gethostname()
-            cfg_args = { 'producer'     : f'{hostname}',
-                         'instance'     : f'{hostname}/{sampler["name"]}',
-                         'component_id' : '${LDMS_COMPONENT_ID}' }
-            for attr in sampler['config']:
-                if attr == 'name' or attr == 'interval':
-                    continue
-                cfg_args[attr] = sampler['config'][attr]
-
             sname = sampler['name']
-            cfg_str = parse_to_cfg_str(cfg_args)
-            interval = check_intrvl_str(sampler['interval'])
             fd.write(f'load name={sname}\n')
-            fd.write(f'config name={sname} {cfg_str}\n')
+            for cfg_ in sampler['config']:
+                if type(cfg_) is dict:
+                    hostname = socket.gethostname()
+                    if args.local:
+                        cfg_args = { 'producer'     : f'{hostname}',
+                                     'instance'     : f'{hostname}/{sampler["name"]}',
+                                     'component_id' : '${LDMS_COMPONENT_ID}' }
+                    else:
+                        cfg_args = {}
+                    check_required(['producer', 'instance'], cfg_,
+                                    'sampler plugin "config"')
+                    for attr in cfg_:
+                        if attr == 'name' or attr == 'interval':
+                            continue
+                    cfg_args[attr] = cfg_[attr]
+                    cfg_str = parse_to_cfg_str(cfg_args)
+                else:
+                    cfg_str = cfg_
+
+                interval = check_intrvl_str(sampler['interval'])
+                fd.write(f'config name={sname} {cfg_str}\n')
             fd.write(f'start name={sname} interval={interval}')
             offset = check_opt('offset', sampler)
             self.write_opt_attr(fd, 'offset', offset)
@@ -642,9 +652,13 @@ class ClusterCtrl(object):
         plugins = check_opt('plugins', self.aggregators[group_name][agg])
         if plugins is not None:
             for plugin in plugins:
-                cfg_str = parse_to_cfg_str(plugin['config'])
                 fd.write(f'load name={plugin["name"]}\n')
-                fd.write(f'config name={plugin["name"]} {cfg_str}\n\n')
+                for cfg_ in plugin["config"]:
+                    if type(cfg_) is dict:
+                        cfg_str = parse_to_cfg_str(plugin["config"])
+                    else:
+                        cfg_str = cfg_
+                    fd.write(f'config name={plugin["name"]} {cfg_str}\n\n')
 
     def write_updaters(self, fd, group_name):
         if group_name in self.updaters:
@@ -679,8 +693,13 @@ class ClusterCtrl(object):
             for store in store_group:
                 if store_group[store]["plugin"]["name"] not in loaded_plugins:
                     fd.write(f'load name={store_group[store]["plugin"]["name"]}\n')
-                    fd.write(f'config name={store_group[store]["plugin"]["name"]} '+
-                             f'{parse_to_cfg_str(store_group[store]["plugin"]["config"])}\n')
+                    for cfg_ in store_group[store]["plugin"]["config"]:
+                        if type(cfg_) is dict:
+                            cfg_str = parse_cfg_str(cfg_)
+                        else:
+                            cfg_str = cfg_
+                        fd.write(f'config name={store_group[store]["plugin"]["name"]} '+
+                                 f'{cfg_str}\n')
                     loaded_plugins.append(store_group[store]["plugin"]["name"])
                 strgp_add = f'strgp_add name={store} plugin={store_group[store]["plugin"]["name"]} '
                 strgp_add += f'container={store_group[store]["container"]} '
@@ -711,7 +730,7 @@ class ClusterCtrl(object):
                 except Exception as e:
                     a, b, d = sys.exc_info()
                     print(f'Error generating sampler configuration: {str(e)} {str(d.tb_lineno)}')
-                    raise ValueError
+                    sys.exit()
             else:
                 print(f'"samplers" not found in configuration file. Skipping...')
 
@@ -772,7 +791,7 @@ if __name__ == "__main__":
         client = None
         args.prefix = None
 
-    cluster = ClusterCtrl(client, args.prefix, conf_spec)
+    cluster = ClusterCtrl(client, args.prefix, conf_spec, args)
 
     if args.local:
         cluster.local_mode(args.local_path)
