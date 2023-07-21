@@ -172,21 +172,28 @@ aggregators:
 
 samplers:
   - daemons : *samplers
-    config :
+    plugins :
       - name        : meminfo # Variables can be specific to plugin
         interval    : "1.0s" # Used when starting the sampler plugin
         offset      : "0ms"
-        perm        : "0777"
+        config      : # Config is a list of dictionaries or strings that defines a plugin configuration
+                      # A config command will be submitted for each string/dictionary in the list
+          - schema       : meminfo
+            component_id : ${LDMS_COMPONENT_ID} # uses an environment variable to set the component_id
+            producer     : ${HOSTNAME}
+            instance     : ${HOSTNAME}/meminfo
+            perm         : "0o777"
 
       - name        : vmstat
         interval    : "1.0s"
         offset      : "0ms"
-        perm        : "0777"
+        config      :
+          - "schema=vmstat producer=${HOSTNAME} instance=${HOSTNAME}/vmstat perm=0o777"
 
       - name        : procstat
         interval    : "1.0s"
         offset      : "0ms"
-        perm        : "0777"
+        config      : [ "schema=vmstat producer=${HOSTNAME} instance=${HOSTNAME}/procstat perm=0o777" ] 
 
 stores:
   - name      : sos-meminfo
@@ -194,9 +201,9 @@ stores:
     container : ldms_data
     schema    : meminfo
     flush     : 10s
-    plugin :
+    plugin : # Store plugin have the same configuration format as sampler plugins e.g. list of strings and or dictionaries
       name   : store_sos
-      config : { path : /DATA }
+      config : [ { path : /DATA } ]
 
   - name      : sos-vmstat
     daemons   : *l2-agg
@@ -205,7 +212,7 @@ stores:
     flush     : 10s
     plugin :
       name   : store_sos
-      config : { path : /DATA }
+      config : [ { path : /DATA } ]
 
   - name      : sos-procstat
     daemons   : *l2-agg
@@ -214,7 +221,7 @@ stores:
     flush     : 10s
     plugin :
       name   : store_sos
-      config : { path : /DATA }
+      config : [ { path : /DATA } ]
 
   - name : csv
     daemons   : *l2-agg
@@ -223,10 +230,10 @@ stores:
     plugin :
       name : store_csv
       config :
-        path        : /DATA/csv/
-        altheader   : 0
-        typeheader  : 1
-        create_uid  : 3031
-        create_gid  : 3031
+        - path        : /DATA/csv/
+          altheader   : 0
+          typeheader  : 1
+          create_uid  : 3031
+          create_gid  : 3031
 ```
 
