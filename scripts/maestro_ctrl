@@ -233,7 +233,7 @@ class ClusterCtrl(object):
                     upd_spec = prod['updaters']
                     # Expand and generate all the producers
                     typ = prod['type']
-                    reconnect = cvt_intrvl_str_to_us(prod['reconnect'])
+                    reconnect = check_intrvl_str(prod['reconnect'])
                     ports_per_dmn = len(endpoints) / len(smplr_dmns)
                     ppd = ports_per_dmn
                     try:
@@ -295,13 +295,13 @@ class ClusterCtrl(object):
                                          f"An updater name must be unique within the group")
                     updtr = {
                         'name'      : updtr_name,
-                        'interval'  : cvt_intrvl_str_to_us(updtr_spec['interval']),
+                        'interval'  : check_intrvl_str(updtr_spec['interval']),
                         'group'     : agg['daemons'],
                         'sets'      : updtr_spec['sets'],
                         'producers' : [{ 'regex' : '.*' }]
                     }
                     if 'offset' in updtr_spec:
-                        updtr['offset'] = cvt_intrvl_str_to_us(updtr_spec['offset'])
+                        updtr['offset'] = check_intrvl_str(updtr_spec['offset'])
                     if 'mode' in updtr_spec:
                         updtr['mode'] = updtr_spec['mode']
                     else:
@@ -349,6 +349,7 @@ class ClusterCtrl(object):
             check_required(['name', 'config'],
                            store_spec['plugin'],
                            '"store plugin" entry')
+            check_opt('flush', store_spec)
             grp_stores[store_name] = store_spec
         return stores
 
@@ -596,7 +597,7 @@ class ClusterCtrl(object):
 
             sname = sampler['name']
             cfg_str = parse_to_cfg_str(cfg_args)
-            interval = cvt_intrvl_str_to_us(sampler['interval'])
+            interval = check_intrvl_str(sampler['interval'])
             fd.write(f'load name={sname}\n')
             fd.write(f'config name={sname} {cfg_str}\n')
             fd.write(f'start name={sname} interval={interval}')
@@ -655,7 +656,7 @@ class ClusterCtrl(object):
         if group_name in self.updaters:
             updtr_group = self.updaters[group_name]
             for updtr in updtr_group:
-                interval = cvt_intrvl_str_to_us(updtr_group[updtr]['interval'])
+                interval = check_intrvl_str(updtr_group[updtr]['interval'])
                 updtr_str = f'updtr_add name={updtr_group[updtr]["name"]} '
                 if 'mode' in updtr_group[updtr]:
                     mode = updtr_group[updtr]['mode']
@@ -746,8 +747,12 @@ if __name__ == "__main__":
     parser.add_argument("--version", metavar="VERSION",
                         help="The OVIS version for the output syntax (4 or 5), default is 4",
                         default=4)
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable debug information")
     args = parser.parse_args()
-
+    if not args.debug:
+        import sys
+        sys.tracebacklimit=0
     config_fp = open(args.ldms_config)
     conf_spec = yaml.safe_load(config_fp)
 

@@ -24,22 +24,33 @@ DEFAULT_ATTR_VAL = {
 INT_ATTRS = [
     'interval',
     'offset',
-    'reconnect'
+    'reconnect',
+    'flush'
 ]
 
+unit_strs = [
+    'ms',
+    'us',
+    'm',
+    's',
+    'h',
+    'd'
+]
 LDMS_YAML_ERR = 'Error parsing ldms_config yaml file'
 LIST_ERR = 'spec must be a list of dictionaries, specified with "-" in the ldms_config yaml file'
 
-def cvt_intrvl_str_to_us(interval_s):
-    """Converts a time interval string to microseconds
+def check_intrvl_str(interval_s):
+    """Check the format of the interval string is correct
 
-    A time-interval string is an integer or float follows by a
+    A time-interval string is an integer or float followed by a
     unit-string. A unit-string is any of the following:
 
-    's'  - seconds
-    'ms' - milliseconds
     'us' - microseconds
+    'ms' - milliseconds
+    's'  - seconds
     'm'  - minutes
+    'h'  - hours
+    'd'  - days
 
     Unit strings are not case-sensitive.
 
@@ -55,40 +66,26 @@ def cvt_intrvl_str_to_us(interval_s):
                 f"'1.5S' - 1.5 seconds\n"\
                 f"'2us'  - 2 microseconds\n"\
                 f"'3m'   - 3 minutes\n"\
+                f"'1h'   - 1 hour\n"\
+                f"'1d'   - 1 day\n"\
                 f"\n"
     if type(interval_s) == int:
         return interval_s
     if type(interval_s) != str:
         raise ValueError(f"{error_str}")
     interval_s = interval_s.lower()
-    if 'us' in interval_s:
-        factor = 1
-        if interval_s.split('us')[1] != '':
+    unit = next((unit for unit in unit_strs if unit in interval_s), None)
+    if unit:
+        if interval_s.split(unit)[1] != '':
             raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('us')[0]
-    elif 'ms' in interval_s:
-        factor = 1000
-        if interval_s.split('ms')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('ms')[0]
-    elif 's' in interval_s:
-        factor = 1000000
-        if interval_s.split('s')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('s')[0]
-    elif 'm' in interval_s:
-        factor = 60000000
-        if interval_s.split('m')[1] != '':
-            raise ValueError(f"{error_str}")
-        ival_s = interval_s.split('m')[0]
+        ival_s = interval_s.split(unit)[0]
     else:
         ival_s = interval_s
-        factor = 1
     try:
         mult = float(ival_s)
-    except:
+    except Exception as e:
         raise ValueError(f"{interval_s} is not a valid time-interval string")
-    return int(mult * factor)
+    return interval_s
 
 def check_opt(attr, spec):
     # Check for optional argument and return None if not present
@@ -99,7 +96,7 @@ def check_opt(attr, spec):
             spec = spec['auth']
     if attr in spec:
         if attr in INT_ATTRS:
-            return cvt_intrvl_str_to_us(spec[attr])
+            return check_intrvl_str(spec[attr])
         return spec[attr]
     else:
         if attr in DEFAULT_ATTR_VAL:
