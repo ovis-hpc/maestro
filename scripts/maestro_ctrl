@@ -235,6 +235,9 @@ class ClusterCtrl(object):
                     typ = prod['type']
                     reconnect = check_intrvl_str(prod['reconnect'])
                     ports_per_dmn = len(endpoints) / len(smplr_dmns)
+                    rx_rate = check_opt('rx_rate', prod)
+                    credits = check_opt('credits', prod)
+                    perm = check_opt('perm', prod)
                     ppd = ports_per_dmn
                     try:
                         for name in names:
@@ -253,7 +256,9 @@ class ClusterCtrl(object):
                                 'type'      : typ,
                                 'group'     : group,
                                 'reconnect' : reconnect,
-                                'updaters'  : upd_spec
+                                'updaters'  : upd_spec,
+                                'rx_rate'   : rx_rate,
+                                'credits'   : credits
                             }
                             producers[group][endpoint] = prod
                     except:
@@ -517,7 +522,6 @@ class ClusterCtrl(object):
         for endp in self.daemons[dmn_grp][dmn_name]['endpoints']:
             ep = self.daemons[dmn_grp][dmn_name]['endpoints'][endp]
             if ep['maestro_comm'] is False:
-                auth = check_opt
                 auth = check_opt('auth', ep)
                 auth_opt = check_opt('conf', ep)
                 if auth:
