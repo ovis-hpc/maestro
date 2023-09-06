@@ -686,10 +686,15 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                 endpoint = endpoints[dmn_grp][dmn]['endpoints'][ep_name]
                 hostname = endpoints[dmn_grp][dmn]['addr']
                 auth = check_opt('auth', endpoint)
+                perm = check_opt('perm', prod)
+                rail = check_opt('rail', prod)
+                credits = check_opt('credits', prod)
+                rx_rate = check_opt('rx_rate', prod)
                 comm.prdcr_add(
                             prod_name, prod['type'],
                             endpoint['xprt'], hostname, endpoint['port'],
-                            prod['reconnect'], auth=auth)
+                            prod['reconnect'], auth=auth, perm=perm, rail=rail,
+                            credits=credits, rx_rate=rx_rate)
     return True
 
 def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
@@ -857,7 +862,8 @@ def stream_subscribe(comms, producers, aggregators, endpoints, agg_state):
                         regex = stream['regex']
                     else:
                         regex = '.*'
-                    rc, err = comm.prdcr_subscribe(regex, stream['stream'])
+                    rx_rate = check_opt('rx_rate', stream)
+                    rc, err = comm.prdcr_subscribe(regex, stream['stream'], rx_rate)
                     if rc:
                         print(f'Error {rc} subscribing to stream {stream["stream"]}: {err}.')
 
