@@ -28,14 +28,19 @@ INT_ATTRS = [
     'flush'
 ]
 
-unit_strs = [
-    'ms',
-    'us',
-    'm',
-    's',
-    'h',
-    'd'
+BYTE_ATTRS = [
+    'rx_rate',
+    'credits'
 ]
+
+unit_strs = {
+    'ms' : 1000,
+    'us' : 1,
+    'm' : 60000000,
+    's' : 1000000,
+    'h' : 3600000000,
+    'd' : 86400000000
+}
 LDMS_YAML_ERR = 'Error parsing ldms_config yaml file'
 LIST_ERR = 'spec must be a list of dictionaries, specified with "-" in the ldms_config yaml file'
 
@@ -69,7 +74,7 @@ def check_intrvl_str(interval_s):
                 f"'1h'   - 1 hour\n"\
                 f"'1d'   - 1 day\n"\
                 f"\n"
-    if type(interval_s) == int:
+    if type(interval_s) == int or type(interval_s) == float:
         return interval_s
     if type(interval_s) != str:
         raise ValueError(f"{error_str}")
@@ -82,10 +87,10 @@ def check_intrvl_str(interval_s):
     else:
         ival_s = interval_s
     try:
-        mult = float(ival_s)
+        ival_s = float(ival_s) * unit_strs[unit]
     except Exception as e:
         raise ValueError(f"{interval_s} is not a valid time-interval string")
-    return interval_s
+    return ival_s
 
 def check_opt(attr, spec):
     # Check for optional argument and return None if not present
@@ -97,6 +102,11 @@ def check_opt(attr, spec):
     if attr in spec:
         if attr in INT_ATTRS:
             return check_intrvl_str(spec[attr])
+        if attr in BYTE_ATTRS:
+            try:
+                return int(spec[attr])
+            except:
+                raise ValueError(f"Error parsing: '{attr}'. '{spec[attr]}' is not a valid integer")
         return spec[attr]
     else:
         if attr in DEFAULT_ATTR_VAL:
