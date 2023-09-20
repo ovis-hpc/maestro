@@ -237,6 +237,7 @@ class ClusterCtrl(object):
                     ports_per_dmn = len(endpoints) / len(smplr_dmns)
                     rx_rate = check_opt('rx_rate', prod)
                     credits = check_opt('credits', prod)
+                    rail = check_opt('rail', prod)
                     perm = check_opt('perm', prod)
                     ppd = ports_per_dmn
                     try:
@@ -256,13 +257,17 @@ class ClusterCtrl(object):
                                 'type'      : typ,
                                 'group'     : group,
                                 'reconnect' : reconnect,
-                                'updaters'  : upd_spec,
-                                'rx_rate'   : rx_rate,
-                                'credits'   : credits
+                                'updaters'  : upd_spec
                             }
+                            if rx_rate:
+                                prod['rx_rate'] = rx_rate
+                            if rail:
+                                prod['rail'] = rail
+                            if credits:
+                                prod['credits'] = credits
                             producers[group][endpoint] = prod
-                    except:
-                        print(f'Error building producer config:\n'\
+                    except Exception as e:
+                        print(f'Error building producer config: {str(e)}\n'\
                               f'Please ensure "endpoints" is configured to the correct number of ports specified.')
         return producers
 
@@ -579,13 +584,19 @@ class ClusterCtrl(object):
                 auth = check_opt('auth', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
                 ptype = producer['type']
                 interval = producer['reconnect']
+                rail = check_opt('rail', producer)
+                rx_rate = check_opt('rx_rate', producer)
+                credits = check_opt('credits', producer)
                 fd.write(f'prdcr_add name={pname} '+
                          f'host={hostname} '+
                          f'port={port} '+
                          f'xprt={xprt} '+
                          f'type={ptype} '+
                          f'interval={interval}')
-                self.write_opt_attr(fd, 'auth', auth)
+                self.write_opt_attr(fd, 'auth', auth, endline=False)
+                self.write_opt_attr(fd, 'rail', rail, endline=False)
+                self.write_opt_attr(fd, 'rx_rate', rx_rate, endline=False)
+                self.write_opt_attr(fd, 'credits', credits)
                 last_sampler = pname
                 if 'regex' in producer:
                     regex = True
@@ -627,10 +638,12 @@ class ClusterCtrl(object):
         if subscribe:
             for stream in subscribe:
                 regex = check_opt('regex', stream)
+                rx_rate = check_opt('rx_rate', stream)
                 if regex is None:
                     regex = '.*'
                 fd.write(f'prdcr_subscribe stream={stream["stream"]} '\
                          f'regex={regex}\n')
+                self.write_opt_attr(fd, 'rx_rate', rx_rate)
 
     def write_aggregators(self, path, group_name):
         # Agg config
