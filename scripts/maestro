@@ -787,6 +787,8 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
                     else:
                         cfg_str = cfg_
                     err, msg = comm.plugn_config(plugin['name'], cfg_str)
+                    if err:
+                        print(f'Error {err}: {msg}')
 
                 flush = check_opt('flush', store)
                 ## the stores may already exist, in which case the add will fail

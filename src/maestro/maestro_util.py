@@ -90,7 +90,7 @@ def check_intrvl_str(interval_s):
         ival_s = float(ival_s) * unit_strs[unit]
     except Exception as e:
         raise ValueError(f"{interval_s} is not a valid time-interval string")
-    return ival_s
+    return int(ival_s)
 
 def check_opt(attr, spec):
     # Check for optional argument and return None if not present
