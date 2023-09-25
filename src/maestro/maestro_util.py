@@ -28,14 +28,14 @@ INT_ATTRS = [
     'flush'
 ]
 
-unit_strs = [
-    'ms',
-    'us',
-    'm',
-    's',
-    'h',
-    'd'
-]
+unit_strs = {
+    'ms' : 1000,
+    'us' : 1,
+    'm' : 60000000,
+    's' : 1000000,
+    'h' : 3600000000,
+    'd' : 86400000000
+}
 LDMS_YAML_ERR = 'Error parsing ldms_config yaml file'
 LIST_ERR = 'spec must be a list of dictionaries, specified with "-" in the ldms_config yaml file'
 
@@ -85,7 +85,7 @@ def check_intrvl_str(interval_s):
         ival_s = float(ival_s) * unit_strs[unit]
     except Exception as e:
         raise ValueError(f"{interval_s} is not a valid time-interval string")
-    return ival_s
+    return int(ival_s)
 
 def check_opt(attr, spec):
     # Check for optional argument and return None if not present
