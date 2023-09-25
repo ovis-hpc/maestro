@@ -149,6 +149,9 @@ aggregators:
       - endpoints : *sampler-endpoints
         reconnect : 20s
         type      : active
+        credits   : -1 # Optional. Send credits the aggregator advertises to the producer. Default -1 is unlimited.
+        rx_rate   : -1 # Optional. Receive rate (bytes/sec) limit for this connection. Default -1 is unlimited
+        rail      : 1 # Optional. The number of rail endpoints for the producer
         updaters  :
           - mode     : pull
             interval : "1.0s"
@@ -156,6 +159,10 @@ aggregators:
             sets     :
               - regex : .*
                 field : inst
+    subscribe :
+      - stream  : kokkos-perf-data # Stream name or regular expression
+        regex   : .* # Regular expression matching producer names
+        rx_rate : -1 # Optional. The receieve rate (bytes/sec) limit for the matching streams. Default -1 is unlimited
 
   - daemons   : *l2-agg
     peers     :
