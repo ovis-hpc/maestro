@@ -464,6 +464,7 @@ class ClusterCtrl(object):
         match_host = False
         for dmn_grp in self.daemons:
             for dmn in self.daemons[dmn_grp]:
+                auth_list = {}
                 if hostname == self.daemons[dmn_grp][dmn]['addr']:
                     match_host = True
                     local_list[dmn] = self.daemons[dmn_grp][dmn]
@@ -471,8 +472,8 @@ class ClusterCtrl(object):
                     if dmn_grp in self.aggregators and dmn in self.aggregators[dmn_grp]:
                         try:
                             fd = open(f'{local_path}/{dmn}.conf', 'w+')
-                            self.write_listeners(fd, dmn_grp, dmn)
-                            self.write_producers(fd, dmn_grp, dmn)
+                            self.write_listeners(fd, dmn_grp, dmn, auth_list)
+                            self.write_producers(fd, dmn_grp, dmn, auth_list)
                             self.write_stream_subscribe(fd, dmn_grp, dmn)
                             self.write_agg_plugins(fd, dmn_grp, dmn)
                             self.write_updaters(fd, dmn_grp)
@@ -481,11 +482,11 @@ class ClusterCtrl(object):
                             print(f'Error {e}: writing ldms configuration files')
                     if fd:
                         fd.close()
-                    if dmn_grp in self.samplers:
+                    if dmn_grp in self.samplers and dmn in self.samplers[dmn_grp]:
                         fd = open(f'{local_path}/{dmn}.conf', 'w+')
                         # TO DO: Refactor sampler config architecture to more easily reference appropriate groups
                         self.write_samplers(fd, dmn_grp)
-                        self.write_listeners(fd, dmn_grp, dmn)
+                        self.write_listeners(fd, dmn_grp, dmn, auth_list)
                     if fd:
                         fd.close()
                     print(f'Starting {dmn}')
@@ -523,20 +524,23 @@ class ClusterCtrl(object):
         start_list.append(f'-F')
         return start_list
 
-    def write_listeners(self, fd, dmn_grp, dmn_name):
+    def write_listeners(self, fd, dmn_grp, dmn_name, auth_list={}):
         for endp in self.daemons[dmn_grp][dmn_name]['endpoints']:
             ep = self.daemons[dmn_grp][dmn_name]['endpoints'][endp]
             if ep['maestro_comm'] is False:
                 auth = check_opt('auth', ep)
                 auth_opt = check_opt('conf', ep)
                 if auth:
-                    plugin = check_opt('plugin', ep['auth'])
-                    fd.write(f'auth_add name={auth}')
-                    self.write_opt_attr(fd, 'plugin', plugin, endline=False)
-                    self.write_opt_attr(fd, 'conf', auth_opt)
+                    if auth not in auth_list:
+                        auth_list[auth] = { 'conf' : auth_opt }
+                        plugin = check_opt('plugin', ep['auth'])
+                        fd.write(f'auth_add name={auth}')
+                        self.write_opt_attr(fd, 'plugin', plugin, endline=False)
+                        self.write_opt_attr(fd, 'conf', auth_opt)
                 fd.write(f'listen xprt={ep["xprt"]} port={ep["port"]}')
                 self.write_opt_attr(fd, 'auth', auth, endline=False)
                 self.write_opt_attr(fd, 'conf', auth_opt)
+        return auth_list
 
     def write_opt_attr(self, fd, attr, val, endline=True):
         # Include leading space
@@ -545,7 +549,7 @@ class ClusterCtrl(object):
         if endline:
             fd.write(f'\n')
 
-    def write_producers(self, fd, group_name, dmn):
+    def write_producers(self, fd, group_name, dmn, auth_list):
         if group_name in self.producers:
             ''' Balance samplers across aggregators '''
             ppd = -(len(self.producers[group_name]) // -len(self.aggregators[group_name].keys()))
@@ -557,23 +561,19 @@ class ClusterCtrl(object):
             prod_group = prdcrs[prdcr_idx:prdcr_idx+ppd]
             i = 0
             auth = None
-            auths = {}
             for ep in prod_group:
                 producer = self.producers[group_name][ep]
                 auth = check_opt('auth', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
                 auth_opt = check_opt('conf', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep])
-                if auth in auths:
-                    continue
-                else:
-                    auths[auth] = { 'conf' : auth_opt }
-            for auth in auths:
-                plugin = check_opt('plugin', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['auth'])
-                if plugin is None:
-                    print(f'Please specify auth plugin type for producer "{producer["daemon"]}" with auth name "{auth}"\n'\
-                           'configuration file generation will continue, but auth will likely be denied.\n')
-                    plugin = auth
-                fd.write(f'auth_add name={auth} plugin={plugin}')
-                self.write_opt_attr(fd, 'conf', auths[auth]['conf'])
+                if auth not in auth_list:
+                    auth_list[auth] = { 'conf' : auth_opt }
+                    plugin = check_opt('plugin', self.daemons[producer['dmn_grp']][producer['daemon']]['endpoints'][ep]['auth'])
+                    if plugin is None:
+                        print(f'Please specify auth plugin type for producer "{producer["daemon"]}" with auth name "{auth}"\n'\
+                               'configuration file generation will continue, but auth will likely be denied.\n')
+                        plugin = auth
+                    fd.write(f'auth_add name={auth} plugin={plugin}')
+                    self.write_opt_attr(fd, 'conf', auth_list[auth]['conf'])
             for ep in prod_group:
                 regex = False
                 producer = self.producers[group_name][ep]
@@ -603,6 +603,7 @@ class ClusterCtrl(object):
                     fd.write(f'prdcr_start_regex regex={producer["regex"]}\n')
                 if not regex:
                     fd.write(f'prdcr_start_regex regex=.*\n')
+            return auth_list
 
     def write_samplers(self, fd, smplr_group):
         for sampler in self.samplers[smplr_group]['plugins']:
@@ -642,7 +643,7 @@ class ClusterCtrl(object):
                 if regex is None:
                     regex = '.*'
                 fd.write(f'prdcr_subscribe stream={stream["stream"]} '\
-                         f'regex={regex}\n')
+                         f'regex={regex}')
                 self.write_opt_attr(fd, 'rx_rate', rx_rate)
 
     def write_aggregators(self, path, group_name):
@@ -652,9 +653,10 @@ class ClusterCtrl(object):
             if group_name not in self.aggregators:
                 return 0
             for agg in self.aggregators[group_name]:
+                auth_list = {}
                 fd = open(f'{path}/{agg}.conf', 'w+')
-                self.write_listeners(fd, group_name, agg)
-                self.write_producers(fd, group_name, agg)
+                auth_list = self.write_listeners(fd, group_name, agg, auth_list)
+                auth_list = self.write_producers(fd, group_name, agg, auth_list)
                 self.write_stream_subscribe(fd, group_name, agg)
                 self.write_agg_plugins(fd, group_name, agg)
                 self.write_updaters(fd, group_name)
