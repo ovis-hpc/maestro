@@ -36,12 +36,14 @@ class MaestroMonitor(object):
         if self.maestro_members:
             # maestros on RAFT
             from pysyncobj import SyncObj, SyncObjConf
+            from pysyncobj.batteries import ReplLockManager
+            from maestro.maestro_raft import DaemonDict
             self.syncobj_cond = threading.Condition(self.lock)
             myhost = socket.gethostname()
             # sort members by host
             self.maestro_members.sort(key = lambda m: m['host'])
             # Check host uniqueness
-            myaddr = None
+            self.myaddr = None
             otheraddrs = list()
             prev_host = None
             for m in self.maestro_members:
@@ -52,25 +54,28 @@ class MaestroMonitor(object):
                     raise RuntimeError(f'{host} appeared more than one time'
                                         ' in the maestro_members list')
                 if host == myhost:
-                    myaddr = f"{host}:{port}"
+                    self.myaddr = f'{host}:{port}'
                 else:
-                    otheraddrs.append(f"{host}:{port}")
+                    otheraddrs.append(f'{host}:{port}')
                 prev_host = host
-            if not myaddr:
+            if not self.myaddr:
                 raise RuntimeError(f'`{myhost}` is not in the maestro_members list')
             syncobjconf = SyncObjConf()
             syncobjconf.onStateChanged = self.on_syncobj_state_changed
-            self.syncobj = SyncObj(myaddr, otheraddrs, conf=syncobjconf)
-        self.config = self.load_config()
+            self.dmn_dict = DaemonDict()
+            self.raftLock = ReplLockManager(autoUnlockTime=120)
+            self.syncobj = SyncObj(self.myaddr, otheraddrs, conf=syncobjconf, consumers=[self.dmn_dict, self.raftLock])
         self.args = args
         if self.args.rebalance != 'sets' and self.args.rebalance != 'producers':
             print(f'"rebalance" parameter must be assigned to either "sets" or "producers"\n'\
                    'If no argument is specified, maestro will balance across producers by default')
             sys.exit(1)
-        self.do_rebalance = False
+        self.do_rebalance = True
         self.res_samplers = False
+        self.config = self.load_config()
         self.reset_conf()
         start_agg_daemons(self.aggregators, self.args.start_aggregators)
+        self.raft_handler(self.raft_balance)
         self.comms = self.build_comms()
         self.etcd_event_handler = {
             'endpoints'   : self.__reconf_endpoints,
@@ -93,12 +98,127 @@ class MaestroMonitor(object):
         self.syncobj_cond.notify()
         self.lock.release()
 
+    def raft_wait(self):
+        while not self.syncobj.isReady():
+            time.sleep(3)
+        return
+
+    def raft_balance(self):
+        import copy
+        self.my_daemons = {}
+        self.raft_wait()
+        if self.syncobj._isLeader():
+            self.my_daemons = copy.deepcopy(self.daemons)
+            if self.syncobj.isReady() and self.raftLock.tryAcquire('raft_balance', sync=True):
+                total_dmns = 0
+                total_aggs = 0
+                for dmn_grp in self.daemons:
+                    total_dmns += len(self.daemons[dmn_grp])
+                for dmn_grp in self.aggregators:
+                    total_aggs += len(self.aggregators[dmn_grp])
+                agg_split = int(total_aggs / len(self.maestro_members))
+                dmn_split = int(total_dmns / len(self.maestro_members))
+                for m in self.maestro_members:
+                    cur_dmns = 0
+                    cur_aggs = 0
+                    mi = f'{m["host"]}:{m["port"]}'
+                    self.dmn_dict.addMaestroGroup(mi, {}, sync=True)
+                    next_mi = False
+                    for dmn_grp in list(self.aggregators):
+                        if next_mi:
+                            break
+                        for dmn in list(self.my_daemons[dmn_grp]):
+                            if dmn_grp not in self.dmn_dict[mi]: self.dmn_dict.setDaemonGroup(mi, dmn_grp, {}, sync=True)
+                            cur_dmns += 1
+                            cur_aggs += 1
+                            self.dmn_dict.setDaemon(mi, dmn_grp, dmn, self.my_daemons[dmn_grp].pop(dmn), sync=True)
+                            if len(self.my_daemons[dmn_grp]) == 0:
+                                self.my_daemons.pop(dmn_grp)
+                            if cur_aggs >= agg_split:
+                                next_mi = True
+                                break
+                    if next_mi:
+                        if cur_dmns < dmn_split:
+                            next_mi = False
+                    for dmn_grp in list(self.samplers):
+                        if dmn_grp in self.aggregators: continue
+                        if next_mi:
+                            break
+                        if len(self.my_daemons[dmn_grp]) < dmn_split:
+                            cur_dmns += len(self.my_daemons[dmn_grp])
+                            self.dmn_dict.setDaemonGroup(mi, dmn_grp, self.my_daemons.pop(dmn_grp), sync=True)
+                            if cur_dmns >= dmn_split:
+                                next_mi = True
+                                break
+                            continue
+                        for dmn in list(self.my_daemons[dmn_grp]):
+                            if dmn_grp not in self.dmn_dict[mi]: self.dmn_dict.setDaemonGroup(mi, dmn_grp, {}, sync=True)
+                            cur_dmns += 1
+                            self.dmn_dict.setDaemon(mi, dmn_grp, dmn, self.my_daemons[dmn_grp].pop(dmn), sync=True)
+                            if len(self.my_daemons[dmn_grp]) == 0:
+                                self.my_daemons.pop(dmn_grp)
+                            if cur_dmns >= dmn_split:
+                                next_mi = True
+                                break
+                # Distribute remainder as equally as possible
+                if len(self.my_daemons) > 0:
+                    ng = False
+                    for mi in self.maestro_members:
+                        if len(self.my_daemons) == 0:
+                            break
+                        mi = f'{m["host"]}:{m["port"]}'
+                        for dmn_grp in list(self.my_daemons):
+                            if ng: break
+                            if dmn_grp not in self.dmn_dict[mi]: self.dmn_dict.setDaemonGroup(mi, dmn_grp, {}, sync=True)
+                            for dmn in list(self.my_daemons[dmn_grp]):
+                               self.dmn_dict.setDaemon(mi, dmn_grp, dmn, self.my_daemons[dmn_grp].pop(dmn), sync=True)
+                               if len(self.my_daemons[dmn_grp]) == 0:
+                                   self.my_daemons.pop(dmn_grp)
+                                   ng = True
+                                   break
+                               continue
+                        continue
+                self.my_daemons = self.dmn_dict[self.myaddr]
+                self.raftLock.release('raft_balance')
+        else:
+            x = True
+            while x==True:
+                if self.raftLock.tryAcquire('raft_balance', sync=True):
+                    self.my_daemons = self.dmn_dict[self.myaddr]
+                    self.raftLock.release('raft_balance')
+                    x=False
+        self.cluster_aggs = copy.deepcopy(self.aggregators)
+        for dmn_grp in list(self.aggregators):
+            if dmn_grp not in self.my_daemons:
+                self.aggregators.pop(dmn_grp)
+                continue
+            for dmn in list(self.aggregators[dmn_grp]):
+                if dmn not in self.my_daemons[dmn_grp]:
+                    self.aggregators[dmn_grp].pop(dmn)
+        for dmn_grp in list(self.samplers):
+            if dmn_grp not in self.my_daemons:
+                self.samplers.pop(dmn_grp)
+        for dmn_grp in list(self.stores):
+            if dmn_grp not in self.my_daemons:
+                self.stores.pop(dmn_grp)
+        for dmn_grp in list(self.producers):
+            if dmn_grp not in self.my_daemons:
+                self.producers.pop(dmn_grp)
+        for dmn_grp in list(self.updaters):
+            if dmn_grp not in self.my_daemons:
+                self.updaters.pop(dmn_grp)
+
+    def raft_handler(self, cb_fn, *args):
+        if self.syncobj:
+            cb_fn(*args)
+
     def reset_conf(self):
         """
         Re-build the entire config for each of the load balance groups
         """
         self.daemons = self.config[self.prefix]['daemons']
-        self.set_samplers()
+        self.my_daemons = self.daemons
+        self.samplers = self.config[self.prefix].get('samplers', dict())
         self.producers = self.config[self.prefix].get('producers', dict())
         self.set_aggs()
         self.updaters = self.config[self.prefix].get('updaters', dict())
@@ -112,12 +232,7 @@ class MaestroMonitor(object):
                     self.aggregators[group][agg]['prdcrs'] = {}
         else:
             self.aggregators = {}
-
-    def set_samplers(self):
-        if 'samplers' in self.config[self.prefix]:
-            self.samplers = self.config[self.prefix]['samplers']
-        else:
-            self.samplers = {}
+        self.cluster_aggs = self.aggregators
 
     def set_cfg_cntr(self):
         for grp_name in self.comms:
@@ -131,14 +246,14 @@ class MaestroMonitor(object):
 
     def build_comms(self):
         comms = {}
-        for dmn_grp in self.daemons:
+        for dmn_grp in self.my_daemons:
             comms[dmn_grp] = {}
-            for dmn_name in self.daemons[dmn_grp]:
+            for dmn_name in self.my_daemons[dmn_grp]:
                 listen = []
-                hostname = self.daemons[dmn_grp][dmn_name]['addr']
-                for ep_name in self.daemons[dmn_grp][dmn_name]['endpoints']:
-                    ep = self.daemons[dmn_grp][dmn_name]['endpoints'][ep_name]
-                    hostname = self.daemons[dmn_grp][dmn_name]['addr']
+                hostname = self.my_daemons[dmn_grp][dmn_name]['addr']
+                for ep_name in self.my_daemons[dmn_grp][dmn_name]['endpoints']:
+                    ep = self.my_daemons[dmn_grp][dmn_name]['endpoints'][ep_name]
+                    hostname = self.my_daemons[dmn_grp][dmn_name]['addr']
                     if 'maestro_comm' not in ep:
                         listen.append(ep)
                         continue
@@ -167,11 +282,11 @@ class MaestroMonitor(object):
         Build list of responsive aggregators in READY state
         """
         grp_aggs = []
-        for agg in self.aggregators[group]:
-            if agg not in agg_state[group]:
+        for agg in self.cluster_aggs[group]:
+            if agg not in agg_state[group] and not self.syncobj:
                 print(f'Could not connect to {agg}')
                 continue
-            elif agg_state[group][agg] != 'ready':
+            elif agg_state[group][agg] != 'ready' and agg_state[group][agg] != 'raft':
                 print(f'{agg} not ready, current state {agg_state[group][agg]}')
                 continue
             grp_aggs.append(agg)
@@ -267,6 +382,9 @@ class MaestroMonitor(object):
         pass
 
     def balance_remainder(self, group, grp_aggs, grp_sets, rem):
+        '''
+        Balance metric set remainder
+        '''
         rb_aggs = []
         n = len(grp_aggs)
         for agg in reversed(grp_aggs):
@@ -282,6 +400,9 @@ class MaestroMonitor(object):
         return rem
 
     def balance_sets(self, group, grp_aggs, grp_sets, bytes_per_agg):
+        '''
+        Balance metric sets across aggregators
+        '''
         for agg in grp_aggs:
             agg_set_size = 0
             for smplr in list(grp_sets):
@@ -330,7 +451,10 @@ class MaestroMonitor(object):
             all_sets[group]['dset_size'] = dset_size
         return all_sets
 
-    def __rebalance_prdcrs(self, agg_state):
+    def __rebalance_prdcrs(self, agg_state=None):
+        # Ignore rebalance if this maestro instance has no aggregators
+        if not agg_state:
+            return
         for group in self.producers:
             grp_prods = list(self.producers[group].keys())
             prod_count = len(grp_prods)
@@ -353,9 +477,14 @@ class MaestroMonitor(object):
                     agg_prods[grp_prods[prod_idx]] = {}
                     prod_idx += 1
                     remainder -= 1
+                if self.syncobj:
+                    if group not in self.aggregators or agg not in self.aggregators[group]:
+                        continue
                 self.aggregators[group][agg]['prdcrs'] = agg_prods
 
-    def __rebalance_sets(self, agg_state):
+    def __rebalance_sets(self, agg_state=None):
+        if not agg_state:
+            return
         # Build set groups
         all_sets = self.get_set_weights()
         for group in self.producers:
@@ -381,7 +510,6 @@ class MaestroMonitor(object):
 
     def rebalance(self, agg_state):
         self.do_rebalance = False
-        self.reset_conf()
         # Start samplers if configured with maestro
         cfg_sampler_eps = self.check_samplers()
         if not self.res_samplers:
@@ -432,6 +560,7 @@ class MaestroMonitor(object):
                     self.do_rebalance = True
                     break
             self.config = config
+            self.reset_conf()
             self.lock.release()
         except Exception as e:
             a, b, c = sys.exc_info()
@@ -439,11 +568,17 @@ class MaestroMonitor(object):
 
     def query_ldmsd_state(self):
         ldmsd_state = {}
-        for grp_name in self.aggregators:
+        for grp_name in self.cluster_aggs:
+            ldmsd_state[grp_name] = {}
+            if grp_name not in self.comms:
+                for name in self.cluster_aggs[grp_name]:
+                    ldmsd_state[grp_name][name] = 'raft'
+                continue
             group = self.comms[grp_name]
-            for name in group:
-                if grp_name not in ldmsd_state:
-                    ldmsd_state[grp_name] = {}
+            for name in self.cluster_aggs[grp_name]:
+                if name not in group:
+                    ldmsd_state[grp_name][name] = 'raft'
+                    continue
                 comm = group[name]
                 if comm.state != comm.CONNECTED:
                     comm.close()
@@ -461,6 +596,9 @@ class MaestroMonitor(object):
                     print(f'Error {err}: {msg}')
                     state = 'disconnected'
                 ldmsd_state[grp_name][name] = state
+        # No aggregators handled by this maestro instance
+        if len(ldmsd_state) is 0:
+            return None
         return ldmsd_state
 
     def cluster_monitor(self):
@@ -470,26 +608,20 @@ class MaestroMonitor(object):
                                                       self.__etcd_caller)
         while True:
             self.lock.acquire() # protects self.do_rebalance and self.conf
-            if self.syncobj:
-                # maestros on RAFT, only act if we are the leader
-                while not self.syncobj._isLeader():
-                    self.syncobj_cond.wait()
-                    # NOTE: cond.wait() releases self.lock and blocking waits.
-                    #       self.lock is re-acquired when cond.wait() returns.
-
             ldmsd_state = self.query_ldmsd_state()
-            for group in ldmsd_state:
-                # Updated configuration, do full rebalance
-                if group not in last_state:
-                    self.do_rebalance = True
-                    last_state = ldmsd_state
-                    break
-                for dmn in ldmsd_state[group]:
-                    if dmn not in last_state[group]:
+            if ldmsd_state:
+                for group in (group for group in ldmsd_state if group in ldmsd_state):
+                    # Updated configuration, do full rebalance
+                    if group not in last_state:
                         self.do_rebalance = True
-                    elif last_state[group][dmn].lower() != ldmsd_state[group][dmn].lower():
-                        self.do_rebalance = True
-                    last_state[group][dmn] = ldmsd_state[group][dmn]
+                        last_state = ldmsd_state
+                        break
+                    for dmn in ldmsd_state[group]:
+                        if dmn not in last_state[group]:
+                            self.do_rebalance = True
+                        elif last_state[group][dmn].lower() != ldmsd_state[group][dmn].lower():
+                            self.do_rebalance = True
+                        last_state[group][dmn] = ldmsd_state[group][dmn]
             if self.do_rebalance:
                 print('Rebalance cluster...')
                 rc = self.rebalance(ldmsd_state)
@@ -509,6 +641,8 @@ def config_samplers(comms, samplers, daemons):
         for smplr in daemons[smplr_group]:
             smplr_host = daemons[smplr_group][smplr]
             # Establish communicator to each ldmsd sampler
+            if smplr not in comms[samplers[smplr_group]['daemons']]:
+                continue
             comm = comms[samplers[smplr_group]['daemons']][smplr]
             err, res = comm.daemon_status()
             if err:
@@ -649,8 +783,9 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
         prod_dict = producers[grp_name]
         # Query the producer list on each aggregator in the group
         for agg_name, agg_host in agg_hosts(grp_name, aggregators, endpoints):
-            if agg_state[grp_name][agg_name] != 'ready':
-                continue
+            if agg_state[grp_name][agg_name] != 'ready' or agg_name not in comms[grp_name]:
+                if agg_state[grp_name][agg_name] != 'raft':
+                    continue
             comm = comms[grp_name][agg_name]
             err, res = comm.prdcr_status()
             prdcrs = fmt_status(res)
@@ -703,7 +838,7 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
         for updtr_name in grp_updaters:
             updtr = grp_updaters[updtr_name]
             for agg_name, agg_host in agg_hosts(grp_name, aggregators, daemons):
-                if agg_state[grp_name][agg_name] != 'ready':
+                if agg_state[grp_name][agg_name] != 'ready' or agg_name not in comms[grp_name]:
                     continue
                 agg_updtr = updtr_name + '_' + agg_name
                 comm = comms[grp_name][agg_name]
@@ -768,7 +903,7 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
         for store_name in grp_stores:
             store = grp_stores[store_name]
             for agg_name, agg_host in agg_hosts(grp_name, aggregators, daemons):
-                if agg_state[grp_name][agg_name] != 'ready':
+                if agg_state[grp_name][agg_name] != 'ready' or agg_name not in comms[grp_name]:
                     continue
                 comm = comms[grp_name][agg_name]
                 store_args = fmt_cmd_args(comm, 'strgp_add', store)
@@ -804,18 +939,18 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
                     return False
     return True
 
-def start_producers(comms, groups, agg_state):
+def start_producers(comms, aggregators, agg_state):
     """
     Query each aggregator for its producer status. If it is already
     running leave it alone, if it is running and not in the new group
     configuration, stop it.
     """
-    for grp_name in groups:
-        group = groups[grp_name]
-        for agg in group:
+    for grp_name in aggregators:
+        agg_grp = aggregators[grp_name]
+        for agg in agg_grp:
             if agg_state[grp_name][agg] != 'ready':
                 continue
-            agg_prods = group[agg]['prdcrs'].keys()
+            agg_prods = agg_grp[agg]['prdcrs'].keys()
             comm = comms[grp_name][agg]
 
             # get the current state
@@ -846,7 +981,7 @@ def stream_subscribe(comms, producers, aggregators, endpoints, agg_state):
         prod_dict = producers[grp_name]
         # Query the producer list on each aggregator in the group
         for agg_name, agg_host in agg_hosts(grp_name, aggregators, endpoints):
-            if agg_state[grp_name][agg_name] != 'ready':
+            if agg_state[grp_name][agg_name] != 'ready' or agg_name not in comms[grp_name]:
                 continue
             comm = comms[grp_name][agg_name]
             err, res = comm.prdcr_status()
