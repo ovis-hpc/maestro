@@ -246,14 +246,14 @@ class MaestroMonitor(object):
 
     def build_comms(self):
         comms = {}
-        for dmn_grp in self.my_daemons:
+        for dmn_grp in self.daemons:
             comms[dmn_grp] = {}
-            for dmn_name in self.my_daemons[dmn_grp]:
+            for dmn_name in self.daemons[dmn_grp]:
                 listen = []
-                hostname = self.my_daemons[dmn_grp][dmn_name]['addr']
-                for ep_name in self.my_daemons[dmn_grp][dmn_name]['endpoints']:
-                    ep = self.my_daemons[dmn_grp][dmn_name]['endpoints'][ep_name]
-                    hostname = self.my_daemons[dmn_grp][dmn_name]['addr']
+                hostname = self.daemons[dmn_grp][dmn_name]['addr']
+                for ep_name in self.daemons[dmn_grp][dmn_name]['endpoints']:
+                    ep = self.daemons[dmn_grp][dmn_name]['endpoints'][ep_name]
+                    hostname = self.daemons[dmn_grp][dmn_name]['addr']
                     if 'maestro_comm' not in ep:
                         listen.append(ep)
                         continue
@@ -300,7 +300,7 @@ class MaestroMonitor(object):
         cfg_smplrs = {}
         for dmn_grp in self.samplers:
             cfg_smplrs[dmn_grp] = {}
-            for sampler in self.comms[dmn_grp]:
+            for sampler in self.my_daemons[dmn_grp]:
                 if self.comms[dmn_grp][sampler].state == 3:
                     print(f'Unable to connect to ldms daemon {sampler}')
                     continue
@@ -381,7 +381,7 @@ class MaestroMonitor(object):
     def __reconf_updaters(self, config):
         pass
 
-    def balance_remainder(self, group, grp_aggs, grp_sets, rem):
+    def balance_set_remainder(self, group, grp_aggs, grp_sets, rem):
         '''
         Balance metric set remainder
         '''
@@ -390,7 +390,11 @@ class MaestroMonitor(object):
         for agg in reversed(grp_aggs):
             for smplr in list(grp_sets):
                 for set_ in list(grp_sets[smplr]['sets']):
-                    if smplr not in self.aggregators[group][agg]['prdcrs']:
+                    if agg not in self.aggregators[group]:
+                        rem -= grp_sets[smplr]['sets'][set_]
+                        grp_sets[smplr]['sets'].pop(set_)
+                        continue
+                    elif smplr not in self.aggregators[group][agg]['prdcrs']:
                         self.aggregators[group][agg]['prdcrs'][smplr] = {}
                         self.aggregators[group][agg]['prdcrs'][smplr]['sets'] = {}
                     rem -= grp_sets[smplr]['sets'][set_]
@@ -409,13 +413,17 @@ class MaestroMonitor(object):
                 for set_ in list(grp_sets[smplr]['sets']):
                     if agg_set_size + grp_sets[smplr]['sets'][set_] <= bytes_per_agg and grp_sets[smplr]['sets'][set_] != 0:
                         agg_set_size += grp_sets[smplr]['sets'][set_]
+                        if group not in self.aggregators or agg not in self.aggregators[group]:
+                            grp_sets[smplr]['sets'].pop(set_)
+                            continue
                         if smplr not in self.aggregators[group][agg]['prdcrs'] and len(grp_sets[smplr]['sets']) > 0:
                             self.aggregators[group][agg]['prdcrs'][smplr] = {}
                             self.aggregators[group][agg]['prdcrs'][smplr]['sets'] = {}
                         self.aggregators[group][agg]['prdcrs'][smplr]['sets'][set_] = grp_sets[smplr]['sets'].pop(set_)
                 if len(grp_sets[smplr]['sets']) == 0:
                     grp_sets.pop(smplr)
-            self.aggregators[group][agg]['agg_set_size'] = agg_set_size
+            if group in self.aggregators and agg in self.aggregators[group]:
+                self.aggregators[group][agg]['agg_set_size'] = agg_set_size
         return grp_sets
 
     def get_set_weights(self):
@@ -428,6 +436,8 @@ class MaestroMonitor(object):
         '''
         all_sets = {}
         for group in self.producers:
+            if group in self.aggregators:
+                continue
             # Organize sets by producer group
             dset_size = 0
             all_sets[group] = {}
@@ -451,36 +461,42 @@ class MaestroMonitor(object):
             all_sets[group]['dset_size'] = dset_size
         return all_sets
 
+    def __balance_prdcr_grp(self, group, agg_state):
+        grp_prods = list(self.producers[group].keys())
+        prod_count = len(grp_prods)
+        grp_aggs = self.check_aggs(group, agg_state)
+        agg_count = len(grp_aggs)
+        if agg_count != 0:
+            prods_per_agg = prod_count // agg_count
+            remainder = prod_count % agg_count
+        else:
+            # None of the aggregators are running
+            return 1
+        # Assign producers to aggregators
+        prod_idx = 0
+        for agg in grp_aggs:
+            agg_prods = {}
+            for cnt in range(0, prods_per_agg):
+                agg_prods[grp_prods[prod_idx]] = {}
+                prod_idx += 1
+            if remainder > 0:
+                agg_prods[grp_prods[prod_idx]] = {}
+                prod_idx += 1
+                remainder -= 1
+            if self.syncobj:
+                if group not in self.aggregators or agg not in self.aggregators[group]:
+                    continue
+            self.aggregators[group][agg]['prdcrs'] = agg_prods
+        return 0
+
     def __rebalance_prdcrs(self, agg_state=None):
         # Ignore rebalance if this maestro instance has no aggregators
         if not agg_state:
             return
         for group in self.producers:
-            grp_prods = list(self.producers[group].keys())
-            prod_count = len(grp_prods)
-            grp_aggs = self.check_aggs(group, agg_state)
-            agg_count = len(grp_aggs)
-            if agg_count != 0:
-                prods_per_agg = prod_count // agg_count
-                remainder = prod_count % agg_count
-            else:
-                # None of the aggregators are running
-                break
-            # Assign producers to aggregators
-            prod_idx = 0
-            for agg in grp_aggs:
-                agg_prods = {}
-                for cnt in range(0, prods_per_agg):
-                    agg_prods[grp_prods[prod_idx]] = {}
-                    prod_idx += 1
-                if remainder > 0:
-                    agg_prods[grp_prods[prod_idx]] = {}
-                    prod_idx += 1
-                    remainder -= 1
-                if self.syncobj:
-                    if group not in self.aggregators or agg not in self.aggregators[group]:
-                        continue
-                self.aggregators[group][agg]['prdcrs'] = agg_prods
+            rc = self.__balance_prdcr_grp(group, agg_state)
+            if rc:
+                print(f'Aggregators responsible for producers {group} not running')
 
     def __rebalance_sets(self, agg_state=None):
         if not agg_state:
@@ -488,6 +504,9 @@ class MaestroMonitor(object):
         # Build set groups
         all_sets = self.get_set_weights()
         for group in self.producers:
+            if group in self.aggregators:
+                self.__balance_prdcr_grp(group, agg_state)
+                continue
             dset_size = all_sets[group]['dset_size']
             grp_sets = all_sets[group]['prdcrs']
             grp_aggs = self.check_aggs(group, agg_state)
@@ -506,7 +525,7 @@ class MaestroMonitor(object):
                         remainder += grp_sets[smplr]['sets'][set_]
             if remainder > 0:
                 # Balance each remaining set across aggregators
-                remainder = self.balance_remainder(group, grp_aggs, grp_sets, remainder)
+                remainder = self.balance_set_remainder(group, grp_aggs, grp_sets, remainder)
 
     def rebalance(self, agg_state):
         self.do_rebalance = False
@@ -570,13 +589,13 @@ class MaestroMonitor(object):
         ldmsd_state = {}
         for grp_name in self.cluster_aggs:
             ldmsd_state[grp_name] = {}
-            if grp_name not in self.comms:
+            if grp_name not in self.aggregators:
                 for name in self.cluster_aggs[grp_name]:
                     ldmsd_state[grp_name][name] = 'raft'
                 continue
             group = self.comms[grp_name]
             for name in self.cluster_aggs[grp_name]:
-                if name not in group:
+                if name not in self.aggregators[grp_name]:
                     ldmsd_state[grp_name][name] = 'raft'
                     continue
                 comm = group[name]
@@ -625,13 +644,7 @@ class MaestroMonitor(object):
             if self.do_rebalance:
                 print('Rebalance cluster...')
                 rc = self.rebalance(ldmsd_state)
-                if self.args.rebalance == 'sets':
-                    n = len(self.aggregators) - 1
-                    while n > 0:
-                        self.rebalance(ldmsd_state)
-                        n -= 1
-                if not self.do_rebalance:
-                    print('Finished load balancing.')
+                print('Finished load balancing.')
             self.lock.release()
             time.sleep(self.args.timeout)
 
@@ -880,6 +893,8 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                 # across sets, rather than producers
                 if rb == 'sets':
                     for prdcr_sets in aggregators[grp_name][agg_name]['prdcrs']:
+                        if 'sets' not in aggregators[grp_name][agg_name]['prdcrs'][prdcr_sets]:
+                            continue
                         for _set in aggregators[grp_name][agg_name]['prdcrs'][prdcr_sets]['sets']:
                             if 'regex' in updtr['sets']:
                                 res = re.match(updtr_['set']['regex'], set_)
