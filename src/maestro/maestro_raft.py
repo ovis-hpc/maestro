@@ -38,6 +38,8 @@ class DaemonDict(SyncObjConsumer):
         self.__daemons[mi][group][dmn].update(data)
 
     def __getitem__(self, key):
+        if key not in self.__daemons:
+            return None
         return self.__daemons[key]
 
     def __len__(self):
