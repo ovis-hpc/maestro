@@ -66,10 +66,15 @@ class MaestroMonitor(object):
             syncobjconf.onStateChanged = self.on_syncobj_state_changed
             self.dmn_dict = DaemonDict()
             self.do_raft_balance = ReplDict()
-            self.raftLock = ReplLockManager(autoUnlockTime=120)
-            self.syncobj = SyncObj(self.myaddr, otheraddrs, conf=syncobjconf, consumers=[self.dmn_dict, self.raftLock, self.do_raft_balance])
+            self.raftLock = ReplLockManager(autoUnlockTime=30)
+            self.syncobj = SyncObj(self.myaddr, otheraddrs, conf=syncobjconf, consumers=[self.dmn_dict,
+                                                                                         self.raftLock,
+                                                                                         self.do_raft_balance])
+            while not self.raftLock.tryAcquire('balance_state', sync=True):
+                self.raft_wait()
             for mi in self.maestro_members:
                 self.do_raft_balance.set(f'{mi["host"]}:{mi["port"]}', 0, sync=True)
+            self.raftLock.release('balance_state')
         self.args = args
         if self.args.rebalance != 'sets' and self.args.rebalance != 'producers':
             print(f'"rebalance" parameter must be assigned to either "sets" or "producers"\n'\
@@ -215,7 +220,10 @@ class MaestroMonitor(object):
         for dmn_grp in list(self.updaters):
             if dmn_grp not in self.my_daemons:
                 self.updaters.pop(dmn_grp)
+        while not self.raftLock.tryAcquire('balance_state', sync=True):
+            self.raft_wait()
         self.do_raft_balance.set(self.myaddr, 0, sync=True)
+        self.raftLock.release('balance_state')
 
     def raft_handler(self, cb_fn, *args):
         if self.syncobj:
@@ -234,8 +242,11 @@ class MaestroMonitor(object):
                 n += 1
             if last_state != self.maestro_cluster:
                 print(f'Raft Balance Detected')
+                while not self.raftLock.tryAcquire('balance_state', sync=True):
+                    self.raft_wait()
                 for mi in self.do_raft_balance.keys():
                     self.do_raft_balance.set(mi, 1, sync=True)
+                self.raftLock.release('balance_state')
 
     def reset_conf(self):
         """
