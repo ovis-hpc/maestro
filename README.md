@@ -45,6 +45,7 @@ The generator will automatically "balance" samplers across aggregators,
 if sampler's are loaded by multiple aggregators, effectively creating
 a unique configuration file for each aggregator in a group.
  The command to generate config files is listed below:
+
 	maestro_ctrl --cluster config/etcd.yaml --ldms_config config/ldms-config.yaml --prefix <cluster_name> --generate-config-path <config_directory_path>
 
 ## Configuration Management
@@ -57,7 +58,10 @@ There are two configuration files consumed by __maestro__:
 1. A file that defines the _etcd_ cluster configuration
 2. A file that defines the LDMS Cluster Configuration
 
-There are two principle commands, maestro and maestro_ctrl. maestro will run the load balancing daemon, as well as start/configure ldmsd's. maestro_ctrl parses a yaml ldms cluster configuration file, and loads it into a etcd key/value store. Both commands are demonstrated below:
+There are two principle commands, maestro and maestro_ctrl. maestro will run
+the load balancing daemon, as well as start/configure ldmsd's. maestro_ctrl
+parses a yaml ldms cluster configuration file, and loads it into a etcd
+key/value store. Both commands are demonstrated below:
 
     maestro --cluster config/etcd.yaml --prefix orion
 
@@ -67,6 +71,38 @@ Sampler interval's and offsets can be configured during runtime, by updating the
 configuration file, and running the maestro_ctrl command to update the etcd cluster with the
 new configuration. Maestro will detect updates to sampler intervals and offsets, and make
 the proper configuration updates to the running samplers.
+
+## Balance Methods
+
+Maestro can be run to distribute ldms sampler data by producer, or by metric set amongst its L1 aggregators. When balancing
+by producer, Maestro will attempt to balance producers (samplers) as evenly as possible across available aggregators.
+When balancing by metric set, Maestro will balance metric sets by "set weight" across first level aggregators.
+Set weight is calculated using the metric set size along with the update frequency of the set. Higher level aggregators
+(e.g. L2 and above) will still be balanced by producer, as additional set balancing at higher levels would be both
+redundant and more resource intensive.
+
+The default mode for Maestro balancing is by producer, no additional arguments are required.
+
+    maestro --cluster config/etcd.yaml --prefix orion
+
+To run Maestro to balance producers by metric set, run maestro with the argument "--rebalance sets"
+
+    maestro --cluster config/etcd.yaml --prefix orion --rebalance sets
+
+## Multi-Instance Maesro
+
+Maestro can be run using RAFT protocol to split configuration and monitoring responsibilities across a
+cluster of Maestro instances. If a quorum of expected Maestro instances is not detected
+in the event of multi-node failues, Maestro will wait until it has quorum before continuing
+to monitor/configure ldmsds. Any configured ldmsd's will be left in their current state.
+
+In this mode, balancing responsibilities are split amongst maestro instances, and 
+
+In order to run maestro in RAFT mode, configure the etcd.yaml file with the maestro instance's
+host names and port numbers you'd like to use. An example is listed below in thet
+ETCD Cluster Configuration section.
+
+Currently Maestro does not support multiple instances on a single host.
 
 ### ETCD Cluster Configuration
 
@@ -85,6 +121,27 @@ members:
 members:
   - host: 10.128.0.9
     port: 2379
+```
+
+```raft yaml
+cluster: voltrino
+members:
+  - host: 10.128.0.7
+    port: 2379
+members:
+  - host: 10.128.0.8
+    port: 2379
+members:
+  - host: 10.128.0.9
+    port: 2379
+
+maestro_members:
+  - host: 10.128.0.7
+    port: 4411
+  - host: 10.128.0.8
+    port: 4411
+  - host: 10.128.0.9
+    port: 4411
 ```
 
 ###LDMS Cluster Configuration
