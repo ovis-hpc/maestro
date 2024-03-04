@@ -472,14 +472,15 @@ class MaestroMonitor(object):
         '''
         all_sets = {}
         for group in self.producers:
-            if group in self.aggregators:
-                continue
             # Organize sets by producer group
             dset_size = 0
             all_sets[group] = {}
             all_sets['dset_size'] = dset_size
             all_sets[group]['prdcrs'] = {}
+            prdcr_rdy = True
             for prdcr in self.producers[group]:
+                if self.producers[group][prdcr]['dmn_grp'] in self.aggregators:
+                    continue
                 rc, dlist = self.comms[self.producers[group][prdcr]['dmn_grp']][self.producers[group][prdcr]['daemon']].dir_list()
                 if rc or dlist is None:
                 # Don't inclue sets in group set count if sampler returns error
@@ -540,7 +541,12 @@ class MaestroMonitor(object):
         # Build set groups
         all_sets = self.get_set_weights()
         for group in self.producers:
-            if group in self.aggregators:
+            skip = False
+            for prdcr in self.producers[group]:
+                if self.producers[group][prdcr]['dmn_grp'] in self.aggregators:
+                    skip = True
+                break
+            if skip:
                 self.__balance_prdcr_grp(group, agg_state)
                 continue
             dset_size = all_sets[group]['dset_size']
