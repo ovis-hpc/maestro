@@ -670,10 +670,11 @@ class MaestroMonitor(object):
         while True:
             self.lock.acquire() # protects self.do_rebalance and self.conf
             self.raft_handler(self.raft_check)
-            if self.do_raft_balance[self.myaddr] != 0:
-               rc = self.raft_balance()
-               self.do_rebalance = True
-               print(f'Finished maesto raft balancing')
+            if self.syncobj:
+                if self.do_raft_balance[self.myaddr] != 0:
+                    rc = self.raft_balance()
+                    self.do_rebalance = True
+                    print(f'Finished maesto raft balancing')
             ldmsd_state = self.query_ldmsd_state()
             if ldmsd_state:
                 for group in (group for group in ldmsd_state if group in ldmsd_state):
