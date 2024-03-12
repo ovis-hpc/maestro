@@ -340,8 +340,9 @@ class ClusterCtrl(object):
         for store_spec in config['stores']:
             check_required([ 'name', 'plugin', 'container' ],
                            store_spec, '"store" entry')
-            decomp = check_opt('decomposition', store_spec)
-            if not decomp:
+            decomp = check_opt('decomp', store_spec)
+            decomposition = check_opt('decomposition', store_spec)
+            if not decomp and not decomposition:
                 check_required(['schema'], store_spec, '"store" entry')
             schema = check_opt('schema', store_spec)
             regex = check_opt('regex', store_spec)
