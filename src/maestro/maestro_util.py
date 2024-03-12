@@ -24,7 +24,8 @@ DEFAULT_ATTR_VAL = {
 INT_ATTRS = [
     'interval',
     'offset',
-    'reconnect'
+    'reconnect',
+    'flush'
 ]
 
 LDMS_YAML_ERR = 'Error parsing ldms_config yaml file'

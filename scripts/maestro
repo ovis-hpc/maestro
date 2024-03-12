@@ -775,6 +775,8 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
                 cfg_str = parse_to_cfg_str(plugin['config'])
                 err, res = comm.plugn_config(plugin_name, cfg_str)
                 ## the stores may already exist, in which case the add will fail
+                if 'decomp' in store:
+                    store_args['decomposition'] = store['decomp']
                 err, res = comm.strgp_add(**store_args)
                 if err:
                     print(f'Error adding storage policy {store_name}: {res}')

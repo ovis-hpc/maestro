@@ -330,8 +330,9 @@ class ClusterCtrl(object):
         for store_spec in config['stores']:
             check_required([ 'name', 'plugin', 'container' ],
                            store_spec, '"store" entry')
-            decomp = check_opt('decomposition', store_spec)
-            if not decomp:
+            decomp = check_opt('decomp', store_spec)
+            decomposition = check_opt('decomposition', store_spec)
+            if not decomp and not decomposition:
                 check_required(['schema'], store_spec, '"store" entry')
             schema = check_opt('schema', store_spec)
             regex = check_opt('regex', store_spec)
@@ -349,6 +350,7 @@ class ClusterCtrl(object):
             check_required(['name', 'config'],
                            store_spec['plugin'],
                            '"store plugin" entry')
+            check_opt('flush', store_spec)
             grp_stores[store_name] = store_spec
         return stores
 
@@ -746,8 +748,12 @@ if __name__ == "__main__":
     parser.add_argument("--version", metavar="VERSION",
                         help="The OVIS version for the output syntax (4 or 5), default is 4",
                         default=4)
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable debug information")
     args = parser.parse_args()
-
+    if not args.debug:
+        import sys
+        sys.tracebacklimit=0
     config_fp = open(args.ldms_config)
     conf_spec = yaml.safe_load(config_fp)
 
