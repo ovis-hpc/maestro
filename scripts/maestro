@@ -658,7 +658,7 @@ class MaestroMonitor(object):
                     state = 'disconnected'
                 ldmsd_state[grp_name][name] = state
         # No aggregators handled by this maestro instance
-        if len(ldmsd_state) is 0:
+        if len(ldmsd_state) == 0:
             return None
         return ldmsd_state
 

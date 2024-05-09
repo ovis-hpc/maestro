@@ -93,14 +93,14 @@ To run Maestro to balance producers by metric set, run maestro with the argument
 
 Maestro can be run using RAFT protocol to split configuration and monitoring responsibilities across a
 cluster of Maestro instances. If a quorum of expected Maestro instances is not detected
-in the event of multi-node failues, Maestro will wait until it has quorum before continuing
+in the event of multi-node failue, Maestro will wait until it has quorum before continuing
 to monitor/configure ldmsds. Any configured ldmsd's will be left in their current state.
 
-In this mode, balancing responsibilities are split amongst maestro instances, and 
+In this mode, balancing and configuration responsibilities are split amongst maestro instances.
 
 In order to run maestro in RAFT mode, configure the etcd.yaml file with the maestro instance's
-host names and port numbers you'd like to use. An example is listed below in thet
-ETCD Cluster Configuration section.
+host names and port numbers you'd like to use using the "maestro_members" keyword. An example is
+listed below in the ETCD Cluster Configuration section.
 
 Currently Maestro does not support multiple instances on a single host.
 
