@@ -39,11 +39,11 @@ class MaestroMonitor(object):
             from pysyncobj import SyncObj, SyncObjConf
             from pysyncobj.batteries import ReplLockManager, ReplDict
             from maestro.maestro_raft import DaemonDict
-            self.maestro_cluster = copy.deepcopy(self.maestro_members)
             self.syncobj_cond = threading.Condition(self.lock)
             myhost = socket.gethostname()
             # sort members by host
             self.maestro_members.sort(key = lambda m: m['host'])
+            self.maestro_cluster = copy.deepcopy(self.maestro_members)
             # Check host uniqueness
             self.myaddr = None
             otheraddrs = list()
