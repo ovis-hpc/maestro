@@ -283,8 +283,11 @@ class ClusterCtrl(object):
                     print(f'             field : inst')
                     continue
                 for updtr_spec in prod['updaters']:
-                    check_required([ 'interval', 'sets', ],
+                    check_required([ 'interval', ],
                                    updtr_spec, '"updaters" entry')
+                    updtr_sets = check_opt('sets', updtr_spec)
+                    if not updtr_sets:
+                        updtr_sets = [{ 'regex':'.*', 'field':'inst' }]
                     group = agg['daemons']
                     if group not in updaters:
                         updaters[group] = {}
@@ -297,7 +300,7 @@ class ClusterCtrl(object):
                         'name'      : updtr_name,
                         'interval'  : check_intrvl_str(updtr_spec['interval']),
                         'group'     : agg['daemons'],
-                        'sets'      : updtr_spec['sets'],
+                        'sets'      : updtr_sets,
                         'producers' : [{ 'regex' : '.*' }]
                     }
                     if 'offset' in updtr_spec:
