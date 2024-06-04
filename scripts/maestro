@@ -65,11 +65,13 @@ class MaestroMonitor(object):
             syncobjconf = SyncObjConf()
             syncobjconf.onStateChanged = self.on_syncobj_state_changed
             self.dmn_dict = DaemonDict()
+            self.ldmsd_mi_state = DaemonDict()
             self.do_raft_balance = ReplDict()
             self.raftLock = ReplLockManager(autoUnlockTime=30)
             self.syncobj = SyncObj(self.myaddr, otheraddrs, conf=syncobjconf, consumers=[self.dmn_dict,
                                                                                          self.raftLock,
-                                                                                         self.do_raft_balance])
+                                                                                         self.do_raft_balance,
+                                                                                         self.ldmsd_mi_state])
             while not self.raftLock.tryAcquire('balance_state', sync=True):
                 self.raft_wait()
             for mi in self.maestro_members:
@@ -87,6 +89,7 @@ class MaestroMonitor(object):
         start_agg_daemons(self.aggregators, self.args.start_aggregators)
         self.raft_handler(self.raft_balance)
         self.comms = self.build_comms()
+        self.raft_handler(self.init_mi_state)
         self.etcd_event_handler = {
             'endpoints'   : self.__reconf_endpoints,
             'daemons'     : self.__reconf_daemons,
@@ -322,7 +325,7 @@ class MaestroMonitor(object):
             if agg not in agg_state[group] and not self.syncobj:
                 print(f'Could not connect to {agg}')
                 continue
-            elif agg_state[group][agg] != 'ready' and agg_state[group][agg] != 'raft':
+            elif agg_state[group][agg] != 'ready':
                 print(f'{agg} not ready, current state {agg_state[group][agg]}')
                 continue
             grp_aggs.append(agg)
@@ -627,18 +630,68 @@ class MaestroMonitor(object):
             a, b, c = sys.exc_info()
             print(str(e) + ' ' + str(c.tb_lineno)+'\n')
 
+    def init_mi_state(self):
+        if self.syncobj._isLeader():
+            while not self.raftLock.tryAcquire('agg_state', sync=True):
+                self.raft_wait()
+            for dmn_grp in self.cluster_aggs:
+                if dmn_grp not in self.ldmsd_mi_state.keys():
+                    self.ldmsd_mi_state.addMaestroGroup(dmn_grp, {}, sync=True)
+                group = self.comms[dmn_grp]
+                for dmn in self.cluster_aggs[dmn_grp]:
+                    comm = group[dmn]
+                    if comm.state != comm.CONNECTED:
+                        comm.close()
+                        comm.reconnect(timeout=args.timeout)
+                    err, msg = comm.daemon_status()
+                    if err == 0 and msg is not None:
+                        msg = fmt_status(msg)
+                        state = msg['state']
+                    else:
+                        print(f'Error getting daemon {dmn} status')
+                        print(f'Error {err}: {msg}')
+                        state = 'disconnected'
+                    self.ldmsd_mi_state.setDaemonGroup(dmn_grp, dmn, state, sync=True)
+        else:
+            x = True
+            while x==True:
+                if self.raftLock.tryAcquire('agg_state', sync=True):
+                    test = self.ldmsd_mi_state
+                    self.raftLock.release('raft_balance')
+                    if len(test) != len(self.cluster_aggs):
+                        self.raft_wait()
+                        continue
+                    x=False
+        self.raftLock.release('agg_state')
+
+    def update_mi_state(self):
+        while not self.raftLock.tryAcquire('agg_state', sync=True):
+            self.raft_wait()
+        for dmn_grp in self.cluster_aggs:
+            if dmn_grp not in self.aggregators:
+                continue
+            for dmn in list(self.daemons[dmn_grp]):
+                if dmn not in self.aggregators[dmn_grp]:
+                    continue
+                if self.ldmsd_mi_state[dmn_grp][dmn] != self.ldmsd_state[dmn_grp][dmn]:
+                    self.ldmsd_mi_state.setDaemonGroup(dmn_grp, dmn, self.ldmsd_state[dmn_grp][dmn], sync=True)
+        self.raftLock.release('agg_state')
+
+    def get_ldmsd_mi_state(self, dmn_grp, dmn):
+        self.ldmsd_state[dmn_grp][dmn] = self.ldmsd_mi_state[dmn_grp][dmn]
+
     def query_ldmsd_state(self):
-        ldmsd_state = {}
+        self.ldmsd_state = {}
         for grp_name in self.cluster_aggs:
-            ldmsd_state[grp_name] = {}
+            self.ldmsd_state[grp_name] = {}
             if grp_name not in self.aggregators:
                 for name in self.cluster_aggs[grp_name]:
-                    ldmsd_state[grp_name][name] = 'raft'
+                    self.raft_handler(self.get_ldmsd_mi_state, grp_name, name)
                 continue
             group = self.comms[grp_name]
             for name in self.cluster_aggs[grp_name]:
                 if name not in self.aggregators[grp_name]:
-                    ldmsd_state[grp_name][name] = 'raft'
+                    self.raft_handler(self.get_ldmsd_mi_state, grp_name, name)
                     continue
                 comm = group[name]
                 if comm.state != comm.CONNECTED:
@@ -656,11 +709,11 @@ class MaestroMonitor(object):
                     print(f'Error getting daemon {name} status')
                     print(f'Error {err}: {msg}')
                     state = 'disconnected'
-                ldmsd_state[grp_name][name] = state
+                self.ldmsd_state[grp_name][name] = state
         # No aggregators handled by this maestro instance
-        if len(ldmsd_state) == 0:
+        if len(self.ldmsd_state) == 0:
             return None
-        return ldmsd_state
+        return self.ldmsd_state
 
     def cluster_monitor(self):
         last_state = {}
@@ -675,26 +728,27 @@ class MaestroMonitor(object):
                     rc = self.raft_balance()
                     self.do_rebalance = True
                     print(f'Finished maesto raft balancing')
-            ldmsd_state = self.query_ldmsd_state()
-            if ldmsd_state:
-                for group in (group for group in ldmsd_state if group in ldmsd_state):
+            self.query_ldmsd_state()
+            if self.ldmsd_state:
+                for group in (group for group in self.ldmsd_state if group in self.ldmsd_state):
                     # Updated configuration, do full rebalance
                     if group not in last_state:
                         print(f'New group detected - Rebalance')
                         self.do_rebalance = True
-                        last_state = ldmsd_state
+                        last_state = self.ldmsd_state
                         break
-                    for dmn in ldmsd_state[group]:
+                    for dmn in self.ldmsd_state[group]:
                         if dmn not in last_state[group]:
                             print(f'New daemon detected - Rebalance')
                             self.do_rebalance = True
-                        elif last_state[group][dmn].lower() != ldmsd_state[group][dmn].lower():
+                        elif last_state[group][dmn].lower() != self.ldmsd_state[group][dmn].lower():
                             print(f'Daemon state change - Rebalance')
+                            self.raft_handler(self.update_mi_state)
                             self.do_rebalance = True
-                        last_state[group][dmn] = ldmsd_state[group][dmn]
+                        last_state[group][dmn] = self.ldmsd_state[group][dmn]
             if self.do_rebalance:
                 print('Rebalance cluster...')
-                rc = self.rebalance(ldmsd_state)
+                rc = self.rebalance(self.ldmsd_state)
                 print('Finished load balancing.')
             self.lock.release()
             time.sleep(self.args.timeout)
@@ -848,8 +902,7 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
         # Query the producer list on each aggregator in the group
         for agg_name, agg_host in agg_hosts(grp_name, aggregators, endpoints):
             if agg_state[grp_name][agg_name] != 'ready' or agg_name not in comms[grp_name]:
-                if agg_state[grp_name][agg_name] != 'raft':
-                    continue
+                continue
             comm = comms[grp_name][agg_name]
             err, res = comm.prdcr_status()
             prdcrs = fmt_status(res)
