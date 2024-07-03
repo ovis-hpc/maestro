@@ -103,6 +103,9 @@ class ClusterCtrl(object):
             dnames = expand_names(spec['names'])
             hostnames = hosts
             if len(dnames) != len(hostnames):
+                if len(hostnames) > len(dnames):
+                    print(f'Error configuring LDMS daemons: "hosts" attribute contains more hosts than daemons')
+                    sys.exit()
                 hosts = [ [host]*(len(dnames)//len(hostnames)) for host in hostnames ]
                 hosts = list(it.chain.from_iterable(hosts))
             ep_names = []
@@ -601,14 +604,18 @@ class ClusterCtrl(object):
             for cfg_ in sampler['config']:
                 if type(cfg_) is dict:
                     hostname = socket.gethostname()
+                    prdcrs = check_opt('producer', cfg_)
+                    inst = check_opt('instance', cfg_)
+                    if not prdcrs:
+                        prdcrs = '{hostname}'
+                    if not inst:
+                        inst = f'{prdcrs}/{sampler["name"]}'
                     if args.local:
                         cfg_args = { 'producer'     : f'{hostname}',
                                      'instance'     : f'{hostname}/{sampler["name"]}',
                                      'component_id' : '${LDMS_COMPONENT_ID}' }
                     else:
                         cfg_args = {}
-                    check_required(['producer', 'instance'], cfg_,
-                                    'sampler plugin "config"')
                     for attr in cfg_:
                         if attr == 'name' or attr == 'interval':
                             continue
@@ -701,15 +708,25 @@ class ClusterCtrl(object):
                     fd.write(f'load name={store_group[store]["plugin"]["name"]}\n')
                     for cfg_ in store_group[store]["plugin"]["config"]:
                         if type(cfg_) is dict:
-                            cfg_str = parse_cfg_str(cfg_)
+                            cfg_str = parse_to_cfg_str(cfg_)
                         else:
                             cfg_str = cfg_
                         fd.write(f'config name={store_group[store]["plugin"]["name"]} '+
                                  f'{cfg_str}\n')
                     loaded_plugins.append(store_group[store]["plugin"]["name"])
+                decomposition = check_opt('decomposition', store_group[store])
+                regex = check_opt('regex', store_group[store])
+                schema = check_opt('schema', store_group[store])
                 strgp_add = f'strgp_add name={store} plugin={store_group[store]["plugin"]["name"]} '
                 strgp_add += f'container={store_group[store]["container"]} '
-                strgp_add += f'schema={store_group[store]["schema"]}'
+                if decomposition:
+                    strgp_add += f'decomposition={decomposition} '
+                    if schema:
+                        strgp_add += f'schema={schema}'
+                    elif regex:
+                        strgp_add += f'regex={regex}'
+                else:
+                    strgp_add += f'schema={schema}'
                 fd.write(strgp_add)
                 flush = check_opt('flush', store_group[store])
                 self.write_opt_attr(fd, 'flush', flush)

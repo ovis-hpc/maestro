@@ -1043,6 +1043,8 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
                 ## the stores may already exist, in which case the add will fail
                 if 'decomp' in store:
                     store_args['decomposition'] = store['decomp']
+                elif 'decomposition' in store:
+                    store_args['decomposition'] = store['decomposition']
                 err, res = comm.strgp_add(**store_args)
                 if err:
                     print(f'Error adding storage policy {store_name}: {res}')
