@@ -668,7 +668,7 @@ class ClusterCtrl(object):
                 fd.write(f'load name={plugin["name"]}\n')
                 for cfg_ in plugin["config"]:
                     if type(cfg_) is dict:
-                        cfg_str = parse_to_cfg_str(plugin["config"])
+                        cfg_str = parse_to_cfg_str(cfg_)
                     else:
                         cfg_str = cfg_
                     fd.write(f'config name={plugin["name"]} {cfg_str}\n\n')
