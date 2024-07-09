@@ -79,12 +79,12 @@ def check_intrvl_str(interval_s):
         if interval_s.split(unit)[1] != '':
             raise ValueError(f"{error_str}")
         ival_s = interval_s.split(unit)[0]
+        try:
+            ival_s = float(ival_s) * unit_strs[unit]
+        except Exception as e:
+            raise ValueError(f"{interval_s} is not a valid time-interval string")
     else:
         ival_s = interval_s
-    try:
-        ival_s = float(ival_s) * unit_strs[unit]
-    except Exception as e:
-        raise ValueError(f"{interval_s} is not a valid time-interval string")
     return int(ival_s)
 
 def check_opt(attr, spec):
