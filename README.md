@@ -92,14 +92,14 @@ To run Maestro to balance producers by metric set, run maestro with the argument
 ## Multi-Instance Maesro
 
 Maestro can be run using RAFT protocol to split configuration and monitoring responsibilities across a
-cluster of Maestro instances. If a quorum of expected Maestro instances is not detected
+cluster of Maestro instances (Multi-Instance Maestro). If a quorum of expected Maestro instances is not detected
 in the event of multi-node failue, Maestro will wait until it has quorum before continuing
 to monitor/configure ldmsds. Any configured ldmsd's will be left in their current state.
 
-In this mode, balancing and configuration responsibilities are split amongst maestro instances.
+In this mode, balancing and configuration responsibilities are split amongst Maestro instances.
 
-In order to run maestro in RAFT mode, configure the etcd.yaml file with the maestro instance's
-host names and port numbers you'd like to use using the "maestro_members" keyword. An example is
+In order to run Maestro in multi-instance mode, configure the etcd.yaml file with the Maestro instance's
+host names and port numbers you'd like to use with the "maestro_members" keyword. An example is
 listed below in the ETCD Cluster Configuration section.
 
 Currently Maestro does not support multiple instances on a single host.
@@ -123,7 +123,7 @@ members:
     port: 2379
 ```
 
-```raft yaml
+```multi-instance maestro yaml
 cluster: voltrino
 members:
   - host: 10.128.0.7
@@ -214,6 +214,10 @@ aggregators:
               - regex : .*
                 field : inst
 
+    subscribe : # Stream subscription example
+      - stream : darshanConnector
+        regex  : ".*" # Regular expression that matches producer names
+
   - daemons   : *l2-agg
     peers     :
       - endpoints : *l1-agg-endpoints
@@ -271,6 +275,16 @@ stores:
       name   : store_sos
       config : [ { path : /DATA } ]
 
+ # Stream store
+  - name      : darshan_store
+    daemons   : *l2-agg
+    container : ldms_data
+    schema    : darshanConnector
+    flush     : 10s
+    plugin    :
+      name : stream_csv_store
+      config : [ { path : /DATA } ]
+
   - name      : sos-procstat
     daemons   : *l2-agg
     container : ldms_data
@@ -280,7 +294,8 @@ stores:
       name   : store_sos
       config : [ { path : /DATA } ]
 
-  - name : csv
+  # CSV Plugin Example
+  - name      : csv
     daemons   : *l2-agg
     container : ldms_data
     schema    : meminfo
@@ -292,5 +307,15 @@ stores:
           typeheader  : 1
           create_uid  : 3031
           create_gid  : 3031
+
+  # Decomposition example
+  - name          : decomp
+    daemons       : *l2-agg
+    container     : ldms_data
+    schema        : meminfo
+    decomposition : /opt/ovis/etc/decomp.json
+    plugin :
+      name : store_sos
+      config : [{path : /DATA }]
 ```
 
