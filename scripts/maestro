@@ -504,36 +504,30 @@ class MaestroMonitor(object):
         return all_sets
 
     def __balance_prdcr_grp(self, group, agg_state):
+        if self.syncobj and group not in self.aggregators:
+            return 0
         grp_prods = list(self.producers[group].keys())
-        prod_count = len(grp_prods)
         grp_aggs = self.check_aggs(group, agg_state)
-        agg_count = len(grp_aggs)
-        if agg_count != 0:
-            prods_per_agg = prod_count // agg_count
-            remainder = prod_count % agg_count
-        else:
-            # None of the aggregators are running
+        if len(grp_aggs) == 0:
             return 1
-        # Assign producers to aggregators
-        prod_idx = 0
+        dist_prods = dist_list(grp_prods, len(grp_aggs))
         for agg in grp_aggs:
             agg_prods = {}
-            for cnt in range(0, prods_per_agg):
-                agg_prods[grp_prods[prod_idx]] = {}
-                prod_idx += 1
-            if remainder > 0:
-                agg_prods[grp_prods[prod_idx]] = {}
-                prod_idx += 1
-                remainder -= 1
-            if self.syncobj:
-                if group not in self.aggregators or agg not in self.aggregators[group]:
-                    continue
-            self.aggregators[group][agg]['prdcrs'] = agg_prods
+            for pl in list(dist_prods):
+                for p in pl:
+                    agg_prods[p] = {}
+                dist_prods.pop(0)
+                if self.syncobj:
+                    if agg not in self.aggregators[group]:
+                        break
+                self.aggregators[group][agg]['prdcrs'] = agg_prods
+                break
         return 0
 
     def __balance_advertised_prdcrs(self, group, agg_state):
         grp_aggs = self.check_aggs(group, agg_state)
-        grp_prods = []
+        if len(grp_aggs) == 0:
+            return 1
         for comm in self.comms[group]:
             reconnect = 20
             print(f'Waiting {reconnect} seconds to allow producer listeners time to recognize advertised producers')
@@ -546,17 +540,11 @@ class MaestroMonitor(object):
             if not ad_prods:
                 continue
             break
-        grp_prods = list(prod['name'] for prod in ad_prods)
-        prod_count = len(grp_prods)
-        agg_count = len(grp_aggs)
-        if agg_count != 0:
-            prods_per_agg = prod_count // agg_count
-            remainder = prod_count % agg_count
-        else:
+        if len(grp_aggs) == 0:
             # None of the aggregators are running
             return 1
         # Assign producers to aggregators
-        prod_idx = 0
+        # Ensure that all aggregator producer listens have successfully seen all advertisers
         while True:
             agg_grp_prods = []
             for agg in grp_aggs:
@@ -570,6 +558,7 @@ class MaestroMonitor(object):
             if all(len(agg_iter) == len_ for agg_iter in agg_iters):
                 del agg_grp_prods
                 break
+        idx = 0
         for agg in grp_aggs:
             # This code assumes all advertisers in a given aggregator group have been advertised to
             # all aggregators in the group. As producer advertisers, e.g. sampler-1 can not share a name for all aggregators,
@@ -580,16 +569,13 @@ class MaestroMonitor(object):
             grp_prods = list(prod['name'] for prod in fmt_status(res))
             agg_prods = {}
             grp_prods.sort()
-            for cnt in range(0, prods_per_agg):
-                agg_prods[grp_prods[prod_idx]] = {}
-                prod_idx += 1
-            if remainder > 0:
-                agg_prods[grp_prods[prod_idx]] = {}
-                prod_idx += 1
-                remainder -= 1
+            dist_prods = dist_list(grp_prods, len(grp_aggs))
+            for p in dist_prods[idx]:
+                agg_prods[p] = {}
+            idx += 1
             if self.syncobj:
-                if group not in self.aggregators or agg not in self.aggregators[group]:
-                    continue
+                if agg not in self.aggregators[group]:
+                    break
             self.aggregators[group][agg]['prdcrs'] = agg_prods
         return 0
 
@@ -600,11 +586,11 @@ class MaestroMonitor(object):
         for group in self.producers:
             rc = self.__balance_prdcr_grp(group, agg_state)
             if rc:
-                print(f'Aggregators responsible for producers {group} not running')
+                print(f'Aggregators responsible for producers {group} are not responsive')
         for group in self.prdcr_listeners:
             rc = self.__balance_advertised_prdcrs(group, agg_state)
             if rc:
-                print(f'Aggregators responsible for advertisers {group} not running')
+                print(f'Aggregators responsible for advertisers {group} are not responsive')
 
     def __rebalance_sets(self, agg_state=None):
         if not agg_state:
