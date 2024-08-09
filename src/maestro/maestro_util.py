@@ -84,12 +84,12 @@ def check_intrvl_str(interval_s):
         if interval_s.split(unit)[1] != '':
             raise ValueError(f"{error_str}")
         ival_s = interval_s.split(unit)[0]
+        try:
+            ival_s = float(ival_s) * unit_strs[unit]
+        except Exception as e:
+            raise ValueError(f"{interval_s} is not a valid time-interval string")
     else:
         ival_s = interval_s
-    try:
-        ival_s = float(ival_s) * unit_strs[unit]
-    except Exception as e:
-        raise ValueError(f"{interval_s} is not a valid time-interval string")
     return int(ival_s)
 
 def check_opt(attr, spec):
@@ -146,6 +146,14 @@ def expand_names(name_spec):
     else:
         names = hostlist.expand_hostlist(NUM_STR(name_spec))
     return names
+
+def check_auth(auth_spec):
+    name = check_opt('auth', auth_spec)
+    if not name:
+        return None, None, None
+    plugin = check_opt('plugin', auth_spec['auth'])
+    auth_opt = check_opt('conf', auth_spec)
+    return name, plugin, auth_opt
 
 def check_plugin_config(plugin):
     check_required(['config'], plugin, '"plugin" entry')
