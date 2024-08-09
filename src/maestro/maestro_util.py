@@ -44,6 +44,16 @@ unit_strs = {
 LDMS_YAML_ERR = 'Error parsing ldms_config yaml file'
 LIST_ERR = 'spec must be a list of dictionaries, specified with "-" in the ldms_config yaml file'
 
+def dist_list(list_, n):
+    q, r = divmod(len(list_), n)
+    dist_list = []
+    idx = 0
+    for i in range(1, n + 1):
+        s = idx
+        idx += q + 1 if i <= r else q
+        dist_list.append(list_[s:idx])
+    return dist_list
+
 def check_intrvl_str(interval_s):
     """Check the format of the interval string is correct
 
