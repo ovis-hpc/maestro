@@ -211,22 +211,22 @@ class MaestroMonitor(object):
             for dmn in list(self.aggregators[dmn_grp]):
                 if dmn not in self.my_daemons[dmn_grp]:
                     self.aggregators[dmn_grp].pop(dmn)
-        for dmn_grp in list(self.samplers):
-            if dmn_grp not in self.my_daemons:
-                self.samplers.pop(dmn_grp)
-        for dmn_grp in list(self.stores):
-            if dmn_grp not in self.my_daemons:
-                self.stores.pop(dmn_grp)
-        for dmn_grp in list(self.producers):
-            if dmn_grp not in self.my_daemons:
-                self.producers.pop(dmn_grp)
-        for dmn_grp in list(self.updaters):
-            if dmn_grp not in self.my_daemons:
-                self.updaters.pop(dmn_grp)
+        self.samplers = self.pop_grps(self.samplers)
+        self.prdcr_listeners = self.pop_grps(self.prdcr_listeners)
+        self.advertisers = self.pop_grps(self.advertisers)
+        self.stores = self.pop_grps(self.stores)
+        self.producers = self.pop_grps(self.producers)
+        self.updaters = self.pop_grps(self.updaters)
         while not self.raftLock.tryAcquire('balance_state', sync=True):
             self.raft_wait()
         self.do_raft_balance.set(self.myaddr, 0, sync=True)
         self.raftLock.release('balance_state')
+
+    def pop_grps(self, spec):
+        for dmn_grp in list(spec.keys()):
+            if dmn_grp not in self.my_daemons:
+                spec.pop(dmn_grp)
+        return spec
 
     def raft_handler(self, cb_fn, *args):
         if self.syncobj:
@@ -259,6 +259,8 @@ class MaestroMonitor(object):
         self.my_daemons = self.daemons
         self.samplers = copy.deepcopy(self.config[self.prefix].get('samplers', dict()))
         self.producers = copy.deepcopy(self.config[self.prefix].get('producers', dict()))
+        self.advertisers = copy.deepcopy(self.config[self.prefix].get('advertisers', dict()))
+        self.prdcr_listeners = copy.deepcopy(self.config[self.prefix].get('prdcr_listeners', dict()))
         self.set_aggs()
         self.updaters = copy.deepcopy(self.config[self.prefix].get('updaters', dict()))
         self.stores = copy.deepcopy(self.config[self.prefix].get('stores', dict()))
@@ -529,6 +531,68 @@ class MaestroMonitor(object):
             self.aggregators[group][agg]['prdcrs'] = agg_prods
         return 0
 
+    def __balance_advertised_prdcrs(self, group, agg_state):
+        grp_aggs = self.check_aggs(group, agg_state)
+        grp_prods = []
+        for comm in self.comms[group]:
+            reconnect = 20
+            print(f'Waiting {reconnect} seconds to allow producer listeners time to recognize advertised producers')
+            time.sleep(reconnect)
+            err, res = self.comms[group][comm].prdcr_status()
+            if err:
+                print(f'Error {err}: getting advertised producers from {comm}: {res}')
+                continue
+            ad_prods = fmt_status(res)
+            if not ad_prods:
+                continue
+            break
+        grp_prods = list(prod['name'] for prod in ad_prods)
+        prod_count = len(grp_prods)
+        agg_count = len(grp_aggs)
+        if agg_count != 0:
+            prods_per_agg = prod_count // agg_count
+            remainder = prod_count % agg_count
+        else:
+            # None of the aggregators are running
+            return 1
+        # Assign producers to aggregators
+        prod_idx = 0
+        while True:
+            agg_grp_prods = []
+            for agg in grp_aggs:
+                err, res = self.comms[group][agg].prdcr_status()
+                if err:
+                    print(f'Error {err}: {res}')
+                    continue
+                agg_grp_prods.append(fmt_status(res))
+            agg_iters = iter(agg_grp_prods)
+            len_ = len(next(agg_iters))
+            if all(len(agg_iter) == len_ for agg_iter in agg_iters):
+                del agg_grp_prods
+                break
+        for agg in grp_aggs:
+            # This code assumes all advertisers in a given aggregator group have been advertised to
+            # all aggregators in the group. As producer advertisers, e.g. sampler-1 can not share a name for all aggregators,
+            # we must make this assumption in order for the load balancing to operate as expected.
+            err, res = self.comms[group][agg].prdcr_status()
+            if err:
+                continue
+            grp_prods = list(prod['name'] for prod in fmt_status(res))
+            agg_prods = {}
+            grp_prods.sort()
+            for cnt in range(0, prods_per_agg):
+                agg_prods[grp_prods[prod_idx]] = {}
+                prod_idx += 1
+            if remainder > 0:
+                agg_prods[grp_prods[prod_idx]] = {}
+                prod_idx += 1
+                remainder -= 1
+            if self.syncobj:
+                if group not in self.aggregators or agg not in self.aggregators[group]:
+                    continue
+            self.aggregators[group][agg]['prdcrs'] = agg_prods
+        return 0
+
     def __rebalance_prdcrs(self, agg_state=None):
         # Ignore rebalance if this maestro instance has no aggregators
         if not agg_state:
@@ -537,6 +601,10 @@ class MaestroMonitor(object):
             rc = self.__balance_prdcr_grp(group, agg_state)
             if rc:
                 print(f'Aggregators responsible for producers {group} not running')
+        for group in self.prdcr_listeners:
+            rc = self.__balance_advertised_prdcrs(group, agg_state)
+            if rc:
+                print(f'Aggregators responsible for advertisers {group} not running')
 
     def __rebalance_sets(self, agg_state=None):
         if not agg_state:
@@ -585,13 +653,16 @@ class MaestroMonitor(object):
                 config_samplers(self.comms, self.samplers, cfg_sampler_eps)
             restart_samplers(self.comms, self.samplers, self.daemons)
             self.res_samplers = False
-
+        # Add advertiser connections
+        add_advertisers(self.comms, self.advertisers, self.daemons)
+        # Add listener connections
+        add_prdcr_listen(self.comms, self.prdcr_listeners, self.aggregators, self.daemons, agg_state)
+        print(f'Balancing producers...')
         self.rebalance_handler[self.args.rebalance](agg_state)
 
         # Add all the producers to the aggregators. Any error here is not an issue
         # because all aggs have all producers, although, not all producers are started.
         add_producers(self.comms, self.producers, self.aggregators, self.daemons, agg_state)
-
         # Add all the updaters and storage policies
         rc = add_updaters(self.comms, self.updaters, self.aggregators, self.daemons, agg_state, rb=self.args.rebalance)
         if rc:
@@ -866,9 +937,7 @@ def restart_samplers(comms, samplers, daemons):
 
 def add_listeners(comm, dmn_name, listeners):
     for ep in listeners:
-        auth = check_opt('auth', ep)
-        auth_opt = check_opt('conf', ep)
-        plugin = check_opt('plugin', ep['auth'])
+        auth, plugin, auth_opt = check_auth(ep)
         if auth != comm.auth:
             rc, msg = comm.auth_add(auth, plugin, auth_opt)
             if rc:
@@ -883,6 +952,89 @@ def add_listeners(comm, dmn_name, listeners):
         if rc:
             print(f'Error adding listening endpoint {ep["name"]}')
             print(f'Error code {rc}: {msg}')
+
+def add_prdcr_listen(comms, prdcr_listen, aggregators, endpoints, agg_state):
+    """Add listeners to aggregators
+
+    Listeners are added to all aggregators in the group. They
+    are in the STANDBY state initially. The "prdcr_listen_start"
+    function will start the "advertised" listeners on the aggregator
+    that have been assigned by the load balancer.
+    """
+    for grp_name in prdcr_listen:
+        grp_prods = set([ pl for pl in prdcr_listen[grp_name]])
+        pl_dict = prdcr_listen[grp_name]
+        for agg_name, agg_host in agg_hosts(grp_name, aggregators, endpoints):
+            if agg_state[grp_name][agg_name] != 'ready' or agg_name not in comms[grp_name]:
+                continue
+            comm = comms[grp_name][agg_name]
+            for pl in pl_dict:
+                rail = check_opt('rail', pl_dict[pl])
+                credits = check_opt('credits', pl_dict[pl])
+                rx_rate = check_opt('rx_rate', pl_dict[pl])
+                regex = check_opt('regex', pl_dict[pl])
+                err, res = comm.prdcr_listen_add(pl,
+                                                 pl_dict[pl]['reconnect'],
+                                                 rail=rail,
+                                                 credits=credits,
+                                                 rx_rate=rx_rate,
+                                                 regex=regex,
+                                                 disable_start=True)
+                if err:
+                    if err == 17:
+                        continue
+                    print(f'Error {err}: Error adding producer listener to {agg_name}: {res}')
+                else:
+                    print(f'Add producer listener {pl}')
+                err, res = comm.prdcr_listen_start(pl)
+
+def add_advertisers(comms, advertisers, endpoints):
+    """Adds all aggregators referenced to each producer in the group.
+
+    Each producer will have a connection for each aggregator in the group.
+    In the event an aggregator goes down, another aggregator in the group
+    will start listening for  the producers that the downed aggregator was
+    responsible for
+    """
+    for grp_name in advertisers:
+        ad_dict = advertisers[grp_name]
+        ad_names = expand_names(ad_dict['names'])
+        for cname in endpoints[grp_name]:
+            comm = comms[grp_name][cname]
+            auth, plugin, auth_opt = check_auth(ad_dict)
+            if auth != comm.auth:
+                err, res = comm.auth_add(auth, plugin, auth_opt)
+                if err:
+                    if err == 17:
+                        continue
+                    print(f'Error {err} adding authentication domain {auth} to {cname}: {res}')
+            for host in expand_names(ad_dict['hosts']):
+                ad_name = f'{ad_names[0]}-{host}'
+                rail = check_opt('rail', ad_dict)
+                credits = check_opt('credits', ad_dict)
+                rx_rate = check_opt('rx_rate', ad_dict)
+                perm = check_opt('perm', ad_dict)
+                err, res = comm.advertiser_add(ad_name,
+                                               ad_dict['xprt'],
+                                               host,
+                                               ad_dict['port'],
+                                               ad_dict['reconnect'],
+                                               auth=auth,
+                                               rail=rail,
+                                               credits=credits,
+                                               rx_rate=rx_rate,
+                                               perm=perm
+                )
+                if err:
+                    if err == 17:
+                        continue
+                    print(f'Error {err}: Error adding advertiser to {cname}: {res}')
+                err, res = comm.advertiser_start(ad_name)
+                if err:
+                    print(f'Error {err}: Error starting advertiser {cname}: {res}')
+                else:
+                    print(f'Started advertiser {ad_name} on {cname}')
+            ad_names.pop(0)
 
 def add_producers(comms, producers, aggregators, endpoints, agg_state):
     """Add producers to Aggregators
@@ -918,9 +1070,7 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                 ep = next(iter(add_prods))
                 dmn_grp = prod_dict[ep]['dmn_grp']
                 dmn = prod_dict[ep]['daemon']
-                auth = check_opt('auth', endpoints[dmn_grp][dmn]['endpoints'][ep])
-                auth_opt = check_opt('conf', endpoints[dmn_grp][dmn]['endpoints'][ep])
-                plugin = check_opt('plugin', endpoints[dmn_grp][dmn]['endpoints'][ep]['auth'])
+                auth, plugin, auth_opt = check_auth(endpoints[dmn_grp][dmn]['endpoints'][ep])
 
             if auth is not None:
                 rc, msg = comm.auth_add(auth, plugin, auth_opt)
@@ -931,17 +1081,20 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
             for prod_name in add_prods:
                 if prod_name not in prod_dict:
                     continue
+                if prod_dict[prod_name]['type'] == 'advertised':
+                    continue
                 prod = prod_dict[prod_name]
                 dmn = prod_dict[prod_name]['daemon']
                 dmn_grp = prod_dict[prod_name]['dmn_grp']
                 ep_name = prod['endpoint']
                 endpoint = endpoints[dmn_grp][dmn]['endpoints'][ep_name]
                 hostname = endpoints[dmn_grp][dmn]['addr']
-                auth = check_opt('auth', endpoint)
                 perm = check_opt('perm', prod)
                 rail = check_opt('rail', prod)
                 credits = check_opt('credits', prod)
                 rx_rate = check_opt('rx_rate', prod)
+                if prod['type'] == 'bridge' or prod['type'] == 'advertiser':
+                    prod_name = f'{agg_name}-{endpoint["port"]}'
                 comm.prdcr_add(
                             prod_name, prod['type'],
                             endpoint['xprt'], hostname, endpoint['port'],
@@ -1086,15 +1239,17 @@ def start_producers(comms, aggregators, agg_state):
             start_prods = list(prod['name'] for prod in res \
                 if prod['name'] in agg_prods)
             stop_prods = list(prod['name'] for prod in res \
-                if prod['state'] != 'STOPPED')
+                if prod['state'] != 'STOPPED' and prod['state'] != 'STANDBY')
             if len(stop_prods) > 0:
                 print(f'Stopping agg {agg} {len(stop_prods)} producers')
             for prod_name in stop_prods:
                 comm.prdcr_stop(prod_name, regex=False)
-            for prod_name in start_prods:
-                comm.prdcr_start(prod_name, regex=False)
             if len(start_prods) > 0:
                 print(f'Starting agg {agg} {len(start_prods)} producers')
+            for prod_name in start_prods:
+                err, res = comm.prdcr_start(prod_name, regex=False)
+                if err:
+                    print(f'Error {err}: Error starting producer {prod_name} on agg {agg}: {res}')
 
 def stream_subscribe(comms, producers, aggregators, endpoints, agg_state):
     """
@@ -1107,23 +1262,24 @@ def stream_subscribe(comms, producers, aggregators, endpoints, agg_state):
         for agg_name, agg_host in agg_hosts(grp_name, aggregators, endpoints):
             if agg_state[grp_name][agg_name] != 'ready' or agg_name not in comms[grp_name]:
                 continue
+            subscribe = check_opt('subscribe', aggregators[grp_name][agg_name])
+            if subscribe is None:
+                continue
             comm = comms[grp_name][agg_name]
             err, res = comm.prdcr_status()
             if err:
                 print(f'stream_subscribe: lost connectivity to {agg_name} err {err}: {res}')
                 return False
 
-            subscribe = check_opt('subscribe', aggregators[grp_name][agg_name])
-            if subscribe is not None:
-                for stream in subscribe:
-                    if 'regex' in stream:
-                        regex = stream['regex']
-                    else:
-                        regex = '.*'
-                    rx_rate = check_opt('rx_rate', stream)
-                    rc, err = comm.prdcr_subscribe(regex, stream['stream'], rx_rate)
-                    if rc:
-                        print(f'Error {rc} subscribing to stream {stream["stream"]}: {err}.')
+            for stream in subscribe:
+                if 'regex' in stream:
+                    regex = stream['regex']
+                else:
+                    regex = '.*'
+                rx_rate = check_opt('rx_rate', stream)
+                rc, err = comm.prdcr_subscribe(regex, stream['stream'], rx_rate)
+                if rc:
+                    print(f'Error {rc} subscribing to stream {stream["stream"]}: {err}.')
 
 RAFT_STATE_TBL = {
         0: "FOLLOWER",

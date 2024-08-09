@@ -154,6 +154,58 @@ class ClusterCtrl(object):
                     ep_dict[spec['names']][dname]['addr'] = host
         return ep_dict
 
+    def build_advertisers(self, spec):
+        if 'advertise' not in spec:
+            return
+        ad_grp = spec['advertise']
+        check_required(['names', 'hosts', 'xprt', 'port', 'reconnect'],
+                       ad_grp, '"advertise" entry')
+        names = expand_names(ad_grp['names'])
+        dmns = expand_names(spec['daemons'])
+        if len(names) != len(dmns):
+            print(f'Please provide a regex for "names" that is equal to the number of daemons'\
+                   'to advertise from\n')
+            sys.exit()
+        auth_name, plugin, auth_opt = check_auth(ad_grp)
+        perm = check_opt('perm', ad_grp)
+        rail = check_opt('rail', ad_grp)
+        credits = check_opt('credits', ad_grp)
+        rx_rate = check_opt('rx_rate', ad_grp)
+        ad_list = expand_names(spec['daemons'])
+        self.advertisers[spec['daemons']] = {'names'     : ad_grp['names'],
+                                             'hosts'     : ad_grp['hosts'],
+                                             'xprt'      : ad_grp['xprt'],
+                                             'port'      : ad_grp['port'],
+                                             'reconnect' : ad_grp['reconnect'],
+                                             'auth'      : { 'name' : auth_name,
+                                                             'conf' : auth_opt,
+                                                             'plugin' : plugin },
+                                             'perm'      : perm,
+                                             'rail'      : rail,
+                                             'credits'   : credits,
+                                             'rx_rate'   : rx_rate,
+                                             'ad_list'   : ad_list
+        }
+
+    def build_prdcr_listeners(self, spec):
+        if 'prdcr_listen' not in spec:
+            return
+        for pl in spec['prdcr_listen']:
+            check_required(['name', 'reconnect'], pl,
+                           '"prdcr_listen" entry')
+            node_listen = {}
+            regex = check_opt('regex', pl)
+            rail = check_opt('rail', pl)
+            credits = check_opt('credits', pl)
+            rx_rate = check_opt('rx_rate', pl)
+            node_listen[pl['name']] = {'reconnect' : pl['reconnect'],
+                                        'rail'      : rail,
+                                        'credits'   : credits,
+                                        'rx_rate'   : rx_rate,
+                                        'regex'     : regex
+            }
+            self.prdcr_listeners[spec['daemons']] = node_listen
+
     def build_aggregators(self, config):
         aggregators = {}
         if 'aggregators' not in config:
@@ -188,6 +240,8 @@ class ClusterCtrl(object):
                     check_required([ 'stream', 'regex' ], stream, "stream specification")
             for name in names:
                 aggregators[group][name] = { 'state' : 'stopped' } # 'running', 'error'
+                self.build_advertisers(agg_spec)
+                self.build_prdcr_listeners(agg_spec)
                 if subscribe:
                     aggregators[group][name]['subscribe'] = subscribe
                 if plugins:
@@ -214,7 +268,7 @@ class ClusterCtrl(object):
             for prod in agg['peers']:
                 check_required([ 'endpoints', 'updaters',
                                  'reconnect', 'type', ],
-                               prod, '"peers" entry')
+                                 prod, '"peers" entry')
                 # Use endpoints for producer names and remove names attribute?
                 if prod['daemons'] not in self.daemons:
                     dmn_grps = prod['daemons'].split(',')
@@ -229,8 +283,6 @@ class ClusterCtrl(object):
                     smplr_dmns = expand_names(daemons)
                     if group not in producers:
                         producers[group] = {}
-
-                    upd_spec = prod['updaters']
                     # Expand and generate all the producers
                     typ = prod['type']
                     reconnect = check_intrvl_str(prod['reconnect'])
@@ -257,7 +309,7 @@ class ClusterCtrl(object):
                                 'type'      : typ,
                                 'group'     : group,
                                 'reconnect' : reconnect,
-                                'updaters'  : upd_spec
+                                'updaters'  : prod['updaters']
                             }
                             if rx_rate:
                                 prod['rx_rate'] = rx_rate
@@ -279,9 +331,14 @@ class ClusterCtrl(object):
         updaters = {}
         updtr_cnt = 0
         for agg in config.get('aggregators', []):
-            if 'peers' not in agg:
+            if 'peers' not in agg and 'prdcr_listen' not in agg:
                 continue
-            for prod in agg['peers']:
+            peer_list = []
+            if 'peers' in agg:
+                peer_list += agg['peers']
+            if 'prdcr_listen' in agg:
+                peer_list += agg['prdcr_listen']
+            for prod in peer_list:
                 if type(prod['updaters']) is not list:
                     print(f'Error parsing ldms_config yaml file')
                     print(f'Updater spec must be a list of dictionaries, specified with "-" designator in the ldms_config yaml file')
@@ -396,6 +453,7 @@ class ClusterCtrl(object):
         for smplr_spec in config['samplers']:
             check_required([ 'daemons', 'plugins' ],
                            smplr_spec, '"sampler" entry')
+            self.build_advertisers(smplr_spec)
             for plugin in smplr_spec['plugins']:
                 check_required(['name'], plugin, '"plugins" entry')
                 plugin = check_plugin_config(plugin)
@@ -433,6 +491,8 @@ class ClusterCtrl(object):
         self.name = name
         self.args = args
         self.cluster_config = cluster_config
+        self.advertisers = {}
+        self.prdcr_listeners = {}
         self.daemons = self.build_daemons(cluster_config)
         self.aggregators = self.build_aggregators(cluster_config)
         self.producers = self.build_producers(cluster_config)
@@ -448,6 +508,8 @@ class ClusterCtrl(object):
         try:
             self.client.delete_prefix('/' + self.name)
             self.walk(self.daemons, '/' + self.name + '/daemons')
+            self.walk(self.advertisers, '/' + self.name + '/advertisers')
+            self.walk(self.prdcr_listeners, '/' + self.name + '/prdcr_listeners')
             self.walk(self.aggregators, '/' + self.name + '/aggregators')
             self.walk(self.producers, '/' + self.name + '/producers')
             self.walk(self.updaters, '/' + self.name + '/updaters')
@@ -622,6 +684,12 @@ class ClusterCtrl(object):
                                      'component_id' : '${LDMS_COMPONENT_ID}' }
                     else:
                         cfg_args = {}
+                    prod = check_opt('producer', cfg_)
+                    inst = check_opt('instance', cfg_)
+                    if not prod:
+                        prod = '{hostname}'
+                    if not inst:
+                        inst = '{hostname}/{sampler["name"]}'
                     check_required(['producer', 'instance'], cfg_,
                                     'sampler plugin "config"')
                     for attr in cfg_:

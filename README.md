@@ -202,6 +202,16 @@ daemons:
 
 aggregators:
   - daemons   : *l1-agg
+    prdcr_listen : # Producer section should be ignored if using advertise feature. Producers that are not using
+                   # advertise can be added in conjunction with those that are.
+      - names : *sampler-endpoints
+        reconnect : 20s
+        # All of the following are optional arguments
+        #regex    : # Regular expression matching sampler hostnames
+        #rail     :
+        #credits  :
+        #rx_rate  :
+
     peers     :
       - endpoints : *sampler-endpoints
         reconnect : 20s
@@ -236,6 +246,13 @@ aggregators:
 
 samplers:
   - daemons : *samplers
+    advertise: # Uses endpoints defined in the daemons section to determine who to advertise to
+      - names : *sampler-endpoints
+        to    : *l1-agg-endpoints # The endpoint transport information to advertise to
+        reconnect : 20s
+        # The following are optional arguments
+        #credits  :
+        #rx_rate  :
     plugins :
       - name        : meminfo # Variables can be specific to plugin
         interval    : "1.0s" # Used when starting the sampler plugin
