@@ -1,0 +1,138 @@
+daemons:
+  - names : &samplers "sampler-[1-8]"
+    hosts : &orion-hosts "node-[01-08]"
+    endpoints :
+      - names : &sampler-endpoints "node-[01-08]-10002"
+        ports : &sampler-ports 10002
+        maestro_comm : True
+        xprt  : sock
+        auth  :
+            name : ovis1
+            plugin : ovis
+            conf : /opt/ovis/etc/secret.conf
+
+  - names : &l1-agg "l1-aggs-[1-3]"
+    hosts : &l1-agg-hosts "node-[01-03]"
+    endpoints :
+      - names : &l1-agg-endpoints "node-[01-03]-10401"
+        ports : &l1-agg-ports 10401
+        maestro_comm : True
+        xprt  : sock
+        auth  :
+            name : munge1
+            plugin : munge
+
+  - names : &l2-agg "l2-agg"
+    hosts : &l2-agg-hosts "node-02"
+    endpoints :
+      - names : &l2-agg-endpoint "node-02-10104"
+        ports : &l2-agg-ports "10104"
+        maestro_comm : True
+        xprt  : sock
+        auth  :
+            name : munge1
+            plugin : munge
+
+aggregators:
+  - daemons   : *l1-agg
+    prdcr_listen : 
+      - name   : 'l1-listen'
+        reconnect : 20s
+        updaters :
+          - mode     : auto
+            interval : "1.0s"
+            offset   : "500ms"
+            sets     :
+              - regex : .*
+                field : inst
+        # All of the following are optional arguments
+        #regex    : # Regular expression matching sampler hostnames
+        #rail     :  
+        #credits  :
+        #rx_rate  :
+
+  - daemons : *l2-agg
+    peers :
+      - daemons : *l1-agg
+        endpoints : *l1-agg-endpoints
+        reconnect : 20s
+        type: active
+        updaters:
+          - mode : onchange
+            interval : "1.0s"
+            offset   : "0ms"
+            sets     :
+              - regex : .*
+                field : inst
+samplers:
+  - daemons : *samplers
+    advertise: # Uses the endpoints defined in the daemons section
+        names     : *samplers 
+        hosts     : *l1-agg-hosts # Daemons defined in the "daemons" dictionary to advertise "to" 
+        xprt      : sock
+        port      : 10401
+        reconnect : 20s
+        auth      :
+          name : munge
+        # The following are optional arguments
+        #perm     : 0o777
+        #rail     : 1
+        #credits  : 
+        #rx_rate  :
+    plugins :
+      - name        : meminfo # Variables can be specific to plugin
+        interval    : 1.0s # Used when starting the sampler plugin
+        offset      : "0s"
+        config :
+          - schema : meminfo
+            perm : "0777"
+
+      - name        : vmstat
+        interval    : "8.0s"
+        offset      : "1ms"
+        config :
+          - schema : vmstat
+            perm  : "0777"
+
+      - name        : procstat
+        interval    : "4.0s"
+        offset      : 2ms
+        config :
+          - schema : procstat
+            perm : "0777"
+
+      - name        : loadavg
+        interval    : "4.0s"
+        offset      : 2ms
+        config :
+          - schema : loadavg
+            perm : "0777"
+
+stores:
+  - name      : sos-meminfo
+    daemons   : *l2-agg
+    container : ldms_data
+    schema    : meminfo
+    flush     : 10s
+    plugin :
+        name   : store_sos
+        config : [{ path : /home/DATA }]
+
+  - name      : sos-vmstat
+    daemons   : *l2-agg
+    container : ldms_data
+    schema    : vmstat
+    flush     : 10s
+    plugin :
+        name   : store_sos
+        config : [{ path : /home/DATA }]
+
+  - name      : sos-procstat
+    daemons   : *l2-agg
+    container : ldms_data
+    schema    : procstat
+    flush     : 10s
+    plugin :
+        name   : store_sos
+        config : [{ path : /home/DATA }]
+
