@@ -124,73 +124,25 @@ class MaestroMonitor(object):
             self.reset_conf()
         if self.syncobj._isLeader():
             self.my_daemons = copy.deepcopy(self.daemons)
+            for mi in self.maestro_cluster:
+                self.dmn_dict.addMaestroGroup(f'{mi["host"]}:{mi["port"]}', {}, sync=True)
             if self.syncobj.isReady():
                 while not self.raftLock.tryAcquire('raft_balance', sync=True):
                     self.raft_wait()
-                total_dmns = 0
-                total_aggs = 0
-                for dmn_grp in self.daemons:
-                    total_dmns += len(self.daemons[dmn_grp])
                 for dmn_grp in self.aggregators:
-                    total_aggs += len(self.aggregators[dmn_grp])
-                agg_split = int(total_aggs / len(self.maestro_cluster))
-                dmn_split = int(total_dmns / len(self.maestro_cluster))
-                self.dmn_dict.clear(sync=True)
-                for m in self.maestro_cluster:
-                    cur_dmns = 0
-                    cur_aggs = 0
-                    mi = f'{m["host"]}:{m["port"]}'
-                    self.dmn_dict.addMaestroGroup(mi, {}, sync=True)
-                    next_mi = False
-                    for dmn_grp in list(self.aggregators):
-                        if next_mi:
-                            break
-                        if dmn_grp not in self.my_daemons:
-                            continue
+                    agg_dist = dist_list(list(self.my_daemons[dmn_grp].keys()), len(self.maestro_cluster))
+                    for p_, mi in zip(agg_dist, self.maestro_cluster):
+                        if dmn_grp not in self.dmn_dict[f'{mi["host"]}:{mi["port"]}']: self.dmn_dict.setDaemonGroup(f'{mi["host"]}:{mi["port"]}', dmn_grp, {}, sync=True)
                         for dmn in list(self.my_daemons[dmn_grp]):
-                            if dmn_grp not in self.dmn_dict[mi]: self.dmn_dict.setDaemonGroup(mi, dmn_grp, {}, sync=True)
-                            cur_dmns += 1
-                            cur_aggs += 1
-                            self.dmn_dict.setDaemon(mi, dmn_grp, dmn, self.my_daemons[dmn_grp].pop(dmn), sync=True)
-                            if len(self.my_daemons[dmn_grp]) == 0:
-                                self.my_daemons.pop(dmn_grp)
-                            if cur_aggs >= agg_split:
-                                next_mi = True
-                                break
-                    if next_mi:
-                        if cur_dmns < dmn_split:
-                            next_mi = False
-                    for dmn_grp in list(self.samplers):
-                        if dmn_grp in self.aggregators: continue
-                        if next_mi:
-                            break
+                            if dmn in p_:
+                                self.dmn_dict.setDaemon(f'{mi["host"]}:{mi["port"]}', dmn_grp, dmn, self.my_daemons[dmn_grp].pop(dmn), sync=True)
+                for dmn_grp in self.samplers:
+                    samp_dist = dist_list(list(self.my_daemons[dmn_grp].keys()), len(self.maestro_cluster))
+                    for p_, mi in zip(samp_dist, self.maestro_cluster):
+                        if dmn_grp not in self.dmn_dict[f'{mi["host"]}:{mi["port"]}']: self.dmn_dict.setDaemonGroup(f'{mi["host"]}:{mi["port"]}', dmn_grp, {}, sync=True)
                         for dmn in list(self.my_daemons[dmn_grp]):
-                            if dmn_grp not in self.dmn_dict[mi]: self.dmn_dict.setDaemonGroup(mi, dmn_grp, {}, sync=True)
-                            cur_dmns += 1
-                            self.dmn_dict.setDaemon(mi, dmn_grp, dmn, self.my_daemons[dmn_grp].pop(dmn), sync=True)
-                            if len(self.my_daemons[dmn_grp]) == 0:
-                                self.my_daemons.pop(dmn_grp)
-                            if cur_dmns >= dmn_split:
-                                next_mi = True
-                                break
-                # Distribute remainder as equally as possible
-                if len(self.my_daemons) > 0:
-                    ng = False
-                    for m in self.maestro_cluster:
-                        if len(self.my_daemons) == 0:
-                            break
-                        mi = f'{m["host"]}:{m["port"]}'
-                        for dmn_grp in list(self.my_daemons):
-                            if ng: break
-                            if dmn_grp not in self.dmn_dict[mi]: self.dmn_dict.setDaemonGroup(mi, dmn_grp, {}, sync=True)
-                            for dmn in list(self.my_daemons[dmn_grp]):
-                               self.dmn_dict.setDaemon(mi, dmn_grp, dmn, self.my_daemons[dmn_grp].pop(dmn), sync=True)
-                               if len(self.my_daemons[dmn_grp]) == 0:
-                                   self.my_daemons.pop(dmn_grp)
-                                   ng = True
-                                   break
-                               continue
-                        continue
+                            if dmn in p_:
+                                self.dmn_dict.setDaemon(f'{mi["host"]}:{mi["port"]}', dmn_grp, dmn, self.my_daemons[dmn_grp].pop(dmn), sync=True)
                 self.my_daemons = self.dmn_dict[self.myaddr]
                 self.raftLock.release('raft_balance')
         else:
@@ -575,7 +527,7 @@ class MaestroMonitor(object):
             idx += 1
             if self.syncobj:
                 if agg not in self.aggregators[group]:
-                    break
+                    continue
             self.aggregators[group][agg]['prdcrs'] = agg_prods
         return 0
 
