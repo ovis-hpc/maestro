@@ -484,6 +484,8 @@ class MaestroMonitor(object):
             reconnect = 20
             print(f'Waiting {reconnect} seconds to allow producer listeners time to recognize advertised producers')
             time.sleep(reconnect)
+            if self.comms[group][comm].state != self.comms[group][comm].CONNECTED:
+                self.comms[group][comm].reconnect()
             err, res = self.comms[group][comm].prdcr_status()
             if err:
                 print(f'Error {err}: getting advertised producers from {comm}: {res}')
