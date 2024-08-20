@@ -477,7 +477,10 @@ class MaestroMonitor(object):
         return 0
 
     def __balance_advertised_prdcrs(self, group, agg_state):
-        grp_aggs = self.check_aggs(group, agg_state)
+        grp_aggs = []
+        for agg in self.ldmsd_state[group]:
+            if self.ldmsd_state[group][agg] == 'ready':
+                grp_aggs.append(agg)
         if len(grp_aggs) == 0:
             return 1
         for comm in self.comms[group]:
@@ -488,7 +491,7 @@ class MaestroMonitor(object):
                 self.comms[group][comm].reconnect()
             err, res = self.comms[group][comm].prdcr_status()
             if err:
-                print(f'Error {err}: getting advertised producers from {comm}: {res}')
+                print(f'Error {err}: getting advertised producers from {comm}: "{res}"')
                 continue
             ad_prods = fmt_status(res)
             if not ad_prods:
@@ -502,10 +505,13 @@ class MaestroMonitor(object):
         while True:
             agg_grp_prods = []
             for agg in grp_aggs:
-                err, res = self.comms[group][agg].prdcr_status()
-                if err:
-                    print(f'Error {err}: {res}')
-                    continue
+                while True:
+                    err, res = self.comms[group][agg].prdcr_status()
+                    if err and self.ldmsd_state[group][agg] == 'ready':
+                        self.comms[group][agg].reconnect()
+                        continue
+                    else:
+                        break
                 agg_grp_prods.append(fmt_status(res))
             agg_iters = iter(agg_grp_prods)
             len_ = len(next(agg_iters))
