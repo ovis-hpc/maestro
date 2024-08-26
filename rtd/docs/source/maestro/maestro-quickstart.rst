@@ -26,7 +26,7 @@ Install / Uninstall
     # Use `upgrade` option so that the existing installation will get upgrade
     # from the source tree. Otherwise, the existing files/directories were left
     # untouched.
-    
+
     # to uninstall
     $ pip3 uninstall maestro
 
@@ -74,7 +74,7 @@ Here's an example of an etcd cluster configuration:
       - host: 10.128.0.9
         port: 2379
 
-LDMS Cluster Configuration 
+LDMS Cluster Configuration
 **********************
 
 The primary configuration groups are daemons - defines LDMS daemons, their hosts, ports, and endpoints aggregators - defines aggregator configuration ldmsd's samplers - defines sampler configuration for ldmsd's stores - defines the various stores for aggregators
@@ -95,7 +95,7 @@ Example LDMS Configuration
                name : ovis1 # The authentication domain name
                plugin : ovis # The plugin type
                conf : /opt/ovis/maestro/secret.conf
-    
+
           - names : &sampler-rdma-endpoints "node-[1-10]-10002/rdma"
             ports : *sampler-ports
             maestro_comm : False
@@ -103,7 +103,7 @@ Example LDMS Configuration
             auth  :
               name : munge1
               plugin : munge
-    
+
       - names : &l1-agg "l1-aggs-[11-14]"
         hosts : &l1-agg-hosts "node-[11-14]"
         endpoints :
@@ -114,7 +114,7 @@ Example LDMS Configuration
             auth  :
               name : munge1
               plugin : munge
-    
+
       - names : &l2-agg "l2-agg"
         hosts : &l2-agg-host "node-15"
         endpoints :
@@ -125,7 +125,7 @@ Example LDMS Configuration
             auth  :
               name : munge1
               plugin : munge
-    
+
     aggregators:
       - daemons   : *l1-agg
         peers     :
@@ -139,7 +139,7 @@ Example LDMS Configuration
                 sets     :
                   - regex : .*
                     field : inst
-    
+
       - daemons   : *l2-agg
         peers     :
           - endpoints : *l1-agg-endpoints
@@ -152,7 +152,7 @@ Example LDMS Configuration
                 sets     :
                   - regex : .*
                     field : inst
-    
+
     samplers:
       - daemons : *samplers
         config :
@@ -160,17 +160,17 @@ Example LDMS Configuration
             interval    : "1.0s" # Used when starting the sampler plugin
             offset      : "0ms"
             perm        : "0777"
-    
+
           - name        : vmstat
             interval    : "1.0s"
             offset      : "0ms"
             perm        : "0777"
-    
+
           - name        : procstat
             interval    : "1.0s"
             offset      : "0ms"
             perm        : "0777"
-    
+
     stores:
       - name      : sos-meminfo
         daemons   : *l2-agg
@@ -180,7 +180,7 @@ Example LDMS Configuration
         plugin :
           name   : store_sos
           config : { path : /DATA }
-    
+
       - name      : sos-vmstat
         daemons   : *l2-agg
         container : ldms_data
@@ -189,7 +189,7 @@ Example LDMS Configuration
         plugin :
           name   : store_sos
           config : { path : /DATA }
-    
+
       - name      : sos-procstat
         daemons   : *l2-agg
         container : ldms_data
@@ -198,7 +198,7 @@ Example LDMS Configuration
         plugin :
           name   : store_sos
           config : { path : /DATA }
-    
+
       - name : csv
         daemons   : *l2-agg
         container : ldms_data
@@ -211,4 +211,4 @@ Example LDMS Configuration
             typeheader  : 1
             create_uid  : 3031
             create_gid  : 3031
-    
+
