@@ -604,8 +604,12 @@ class ClusterCtrl(object):
                                      'component_id' : '${LDMS_COMPONENT_ID}' }
                     else:
                         cfg_args = {}
-                    check_required(['producer', 'instance'], cfg_,
-                                    'sampler plugin "config"')
+                    prod = check_opt('producer', cfg_)
+                    inst = check_opt('instance', cfg_)
+                    if not prod:
+                        prod = '{hostname}'
+                    if not inst:
+                        inst = '{hostname}/{sampler["name"]}'
                     for attr in cfg_:
                         if attr == 'name' or attr == 'interval':
                             continue
@@ -698,7 +702,7 @@ class ClusterCtrl(object):
                     fd.write(f'load name={store_group[store]["plugin"]["name"]}\n')
                     for cfg_ in store_group[store]["plugin"]["config"]:
                         if type(cfg_) is dict:
-                            cfg_str = parse_cfg_str(cfg_)
+                            cfg_str = parse_to_cfg_str(cfg_)
                         else:
                             cfg_str = cfg_
                         fd.write(f'config name={store_group[store]["plugin"]["name"]} '+
