@@ -31,6 +31,7 @@ INT_ATTRS = [
 unit_strs = {
     'ms' : 1000,
     'us' : 1,
+    None : 1,
     'm' : 60000000,
     's' : 1000000,
     'h' : 3600000000,
@@ -74,7 +75,7 @@ def check_intrvl_str(interval_s):
     if type(interval_s) != str:
         raise ValueError(f"{error_str}")
     interval_s = interval_s.lower()
-    unit = next((unit for unit in unit_strs if unit in interval_s), None)
+    unit = next((unit for unit in unit_strs if unit and unit in interval_s), None)
     if unit:
         if interval_s.split(unit)[1] != '':
             raise ValueError(f"{error_str}")
