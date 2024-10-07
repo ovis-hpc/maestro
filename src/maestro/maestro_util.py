@@ -30,7 +30,7 @@ INT_ATTRS = [
 
 BYTE_ATTRS = [
     'rx_rate',
-    'credits'
+    'quota'
 ]
 
 unit_strs = {

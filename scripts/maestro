@@ -916,13 +916,13 @@ def add_prdcr_listen(comms, prdcr_listen, aggregators, endpoints, agg_state):
             comm = comms[grp_name][agg_name]
             for pl in pl_dict:
                 rail = check_opt('rail', pl_dict[pl])
-                credits = check_opt('credits', pl_dict[pl])
+                quota = check_opt('quota', pl_dict[pl])
                 rx_rate = check_opt('rx_rate', pl_dict[pl])
                 regex = check_opt('regex', pl_dict[pl])
                 err, res = comm.prdcr_listen_add(pl,
                                                  pl_dict[pl]['reconnect'],
                                                  rail=rail,
-                                                 credits=credits,
+                                                 quota=quota,
                                                  rx_rate=rx_rate,
                                                  regex=regex,
                                                  disable_start=True)
@@ -957,7 +957,7 @@ def add_advertisers(comms, advertisers, endpoints):
             for host in expand_names(ad_dict['hosts']):
                 ad_name = f'{ad_names[0]}-{host}'
                 rail = check_opt('rail', ad_dict)
-                credits = check_opt('credits', ad_dict)
+                quota = check_opt('quota', ad_dict)
                 rx_rate = check_opt('rx_rate', ad_dict)
                 perm = check_opt('perm', ad_dict)
                 err, res = comm.advertiser_add(ad_name,
@@ -967,7 +967,7 @@ def add_advertisers(comms, advertisers, endpoints):
                                                ad_dict['reconnect'],
                                                auth=auth,
                                                rail=rail,
-                                               credits=credits,
+                                               quota=quota,
                                                rx_rate=rx_rate,
                                                perm=perm
                 )
@@ -1037,7 +1037,7 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                 hostname = endpoints[dmn_grp][dmn]['addr']
                 perm = check_opt('perm', prod)
                 rail = check_opt('rail', prod)
-                credits = check_opt('credits', prod)
+                quota = check_opt('quota', prod)
                 rx_rate = check_opt('rx_rate', prod)
                 if prod['type'] == 'bridge' or prod['type'] == 'advertiser':
                     prod_name = f'{agg_name}-{endpoint["port"]}'
@@ -1045,7 +1045,7 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                             prod_name, prod['type'],
                             endpoint['xprt'], hostname, endpoint['port'],
                             prod['reconnect'], auth=auth, perm=perm, rail=rail,
-                            credits=credits, rx_rate=rx_rate)
+                            quota=quota, rx_rate=rx_rate)
     return True
 
 def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):

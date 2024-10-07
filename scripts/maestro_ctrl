@@ -169,7 +169,7 @@ class ClusterCtrl(object):
         auth_name, plugin, auth_opt = check_auth(ad_grp)
         perm = check_opt('perm', ad_grp)
         rail = check_opt('rail', ad_grp)
-        credits = check_opt('credits', ad_grp)
+        quota = check_opt('quota', ad_grp)
         rx_rate = check_opt('rx_rate', ad_grp)
         ad_list = expand_names(spec['daemons'])
         self.advertisers[spec['daemons']] = {'names'     : ad_grp['names'],
@@ -182,7 +182,7 @@ class ClusterCtrl(object):
                                                              'plugin' : plugin },
                                              'perm'      : perm,
                                              'rail'      : rail,
-                                             'credits'   : credits,
+                                             'quota'     : quota,
                                              'rx_rate'   : rx_rate,
                                              'ad_list'   : ad_list
         }
@@ -196,11 +196,11 @@ class ClusterCtrl(object):
             node_listen = {}
             regex = check_opt('regex', pl)
             rail = check_opt('rail', pl)
-            credits = check_opt('credits', pl)
+            quota = check_opt('quota', pl)
             rx_rate = check_opt('rx_rate', pl)
             node_listen[pl['name']] = {'reconnect' : pl['reconnect'],
                                         'rail'      : rail,
-                                        'credits'   : credits,
+                                        'quota'     : quota,
                                         'rx_rate'   : rx_rate,
                                         'regex'     : regex
             }
@@ -288,7 +288,7 @@ class ClusterCtrl(object):
                     reconnect = check_intrvl_str(prod['reconnect'])
                     ports_per_dmn = len(endpoints) / len(smplr_dmns)
                     rx_rate = check_opt('rx_rate', prod)
-                    credits = check_opt('credits', prod)
+                    quota = check_opt('quota', prod)
                     rail = check_opt('rail', prod)
                     perm = check_opt('perm', prod)
                     ppd = ports_per_dmn
@@ -315,8 +315,8 @@ class ClusterCtrl(object):
                                 prod['rx_rate'] = rx_rate
                             if rail:
                                 prod['rail'] = rail
-                            if credits:
-                                prod['credits'] = credits
+                            if quota:
+                                prod['quota'] = quota
                             producers[group][endpoint] = prod
                     except Exception as e:
                         print(f'Error building producer config: {str(e)}\n'\
@@ -652,7 +652,7 @@ class ClusterCtrl(object):
                 interval = producer['reconnect']
                 rail = check_opt('rail', producer)
                 rx_rate = check_opt('rx_rate', producer)
-                credits = check_opt('credits', producer)
+                quota = check_opt('quota', producer)
                 fd.write(f'prdcr_add name={pname} '+
                          f'host={hostname} '+
                          f'port={port} '+
@@ -662,7 +662,7 @@ class ClusterCtrl(object):
                 self.write_opt_attr(fd, 'auth', auth, endline=False)
                 self.write_opt_attr(fd, 'rail', rail, endline=False)
                 self.write_opt_attr(fd, 'rx_rate', rx_rate, endline=False)
-                self.write_opt_attr(fd, 'credits', credits)
+                self.write_opt_attr(fd, 'quota', quota)
                 last_sampler = pname
                 if 'regex' in producer:
                     regex = True
