@@ -123,54 +123,39 @@ aggregators:
               - regex : .*
                 field : inst
 
+plugins :
+  meminfo1 :                # Instance name for the storage policy
+    name : meminfo          # Name of plugin to load
+    interval    : 1.0s      # Used when starting the sampler plugin
+    offset      : "0s"
+    config      :           # Plugin specific variables
+      - schema : meminfo
+        perm : "0777"
+
+  vmstat1 :
+    name : vmstat
+    interval    : "8.0s"
+    offset      : "1ms"
+    config      :
+      - schema : vmstat
+        perm  : "0777"
+
+  procstat1 :
+    name : procstat
+    interval    : "4.0s"
+    offset      : 2ms
+    config      :
+      - schema : procstat
+        perm   : "0777"
+
+  store_sos1 :              # Storage plugins are included in the "plugins" section
+    name   : store_sos
+    config : [{ path : /home/nick/DATA }]
+
 # Sampler plugin configuration
 samplers:
-  - daemons : "sampler-1"
-    plugins :
-      - name        : meminfo # Variables can be specific to plugin
-        interval    : 1.0s # Used when starting the sampler plugin
-        offset      : "0s"
-        config : [ 'schema=meminfo producer=sampler-1 instance=sampler-1/meminfo perm=0777' ]
-
-      - name        : vmstat
-        interval    : "2.0s"
-        offset      : "1ms"
-        config : 
-          - 'schema=vmstat producer=sampler-1 instance=sampler-1/vmstat perm=0777'
-
-      - name        : procstat
-        interval    : "4.0s"
-        offset      : 2ms
-        config :
-          - schema : procstat
-            component_id : "${LDMS_COMPONENT_ID}"
-            perm : "0777"
-
   - daemons : *samplers
-    plugins : # Attributes can be specific to plugin
-      - name        : meminfo
-        interval    : 1.0s # Used when starting the sampler plugin
-        offset      : "0s"
-        config : # If instance/producer are not defined, producer defaults to ${HOSTNAME} and instance defaults to <producer name>/<plugin name>
-          - schema : meminfo
-            component_id : "${LDMS_COMPONENT_ID}"
-            perm  : "0777"
-
-      - name        : vmstat
-        interval    : "2.0s"
-        offset      : "1ms"
-        config :
-          - schema : vmstat
-            component_id : "${LDMS_COMPONENT_ID}"
-            perm  : "0777"
-
-      - name        : procstat
-        interval    : "4.0s"
-        offset      : 2ms
-        config :
-          - schema : procstat
-            component_id : "${LDMS_COMPONENT_ID}"
-            perm  : "0777"
+    plugins : [ meminfo1, vmstat1, procstat1 ]
 
 # Storage policy configuration
 stores:
@@ -179,25 +164,19 @@ stores:
     container : ldms_data
     schema    : meminfo 
     flush     : 10s
-    plugin :
-      name   : store_sos
-      config : [ 'path=/home/nick/DATA' ]
+    plugin    : store_sos1
 
   - name      : sos-vmstat
     daemons   : *l2-agg
     container : ldms_data
     schema    : vmstat
     flush     : 10s
-    plugin :
-      name   : store_sos
-      config : [ { path : /home/nick/DATA } ]
+    plugin    : store_sos1
 
   - name      : sos-procstat
     daemons   : *l2-agg
     container : ldms_data
     schema    : procstat
     flush     : 10s
-    plugin :
-      name   : store_sos
-      config : [ { path : /home/nick/DATA } ]
+    plugin    : store_sos1
 

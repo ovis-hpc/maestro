@@ -30,7 +30,7 @@ $ pip3 install --upgrade --prefix /opt/ovis .
 # untouched.
 
 # to uninstall
-$ pip3 uninstall maestro
+$ pip3 uninstall ovis-maestro
 ```
 
 ## Dependencies
@@ -170,70 +170,67 @@ aggregators:
               - regex : .*
                 field : inst
 
+plugins:
+  meminfo1 :                # Instance name for the storage policy. The key is the instance name of the plugin
+    name : meminfo          # Name of plugin to load
+    interval    : 1.0s      # Used when starting the sampler plugin
+    offset      : "0s"
+    config      :           # Plugin specific variables
+      - schema : meminfo
+        perm : "0777"
+
+  vmstat1 :
+    name : vmstat
+    interval    : "8.0s"
+    offset      : "1ms"
+    config      :
+      - schema : vmstat
+        perm  : "0777"
+
+  procstat1 :
+    name : procstat
+    interval    : "4.0s"
+    offset      : 2ms
+    config      :
+      - schema : procstat
+        perm   : "0777"
+
+  store_sos1 :              # Storage plugins are included in the "plugins" section
+    name   : store_sos
+    config : [{ path : /home/nick/DATA }]
+
+  csv1 :
+    name : store_csv
+    config :
+      - path        : /DATA/csv/
+        altheader   : 0
+        typeheader  : 1
+        create_uid  : 3031
+        create_gid  : 3031
+
 samplers:
   - daemons : *samplers
-    plugins :
-      - name        : meminfo # Variables can be specific to plugin
-        interval    : "1.0s" # Used when starting the sampler plugin
-        offset      : "0ms"
-        config      : # Config is a list of dictionaries or strings that defines a plugin configuration
-                      # A config command will be submitted for each string/dictionary in the list
-          - schema       : meminfo
-            component_id : ${LDMS_COMPONENT_ID} # uses an environment variable to set the component_id
-            producer     : ${HOSTNAME}
-            instance     : ${HOSTNAME}/meminfo
-            perm         : "0o777"
-
-      - name        : vmstat
-        interval    : "1.0s"
-        offset      : "0ms"
-        config      :
-          - "schema=vmstat producer=${HOSTNAME} instance=${HOSTNAME}/vmstat perm=0o777"
-
-      - name        : procstat
-        interval    : "1.0s"
-        offset      : "0ms"
-        config      : [ "schema=vmstat producer=${HOSTNAME} instance=${HOSTNAME}/procstat perm=0o777" ] 
+    plugins : [ meminfo1, vmstat1, procstat1 ]
 
 stores:
-  - name      : sos-meminfo
+  sos-meminfo :
     daemons   : *l2-agg
     container : ldms_data
     schema    : meminfo
     flush     : 10s
-    plugin : # Store plugin have the same configuration format as sampler plugins e.g. list of strings and or dictionaries
-      name   : store_sos
-      config : [ { path : /DATA } ]
+    plugin    : store_sos1  # References a storage plugin instance name defined in the "plugins" dictionary
 
-  - name      : sos-vmstat
+  sos-vmstat :
     daemons   : *l2-agg
     container : ldms_data
     schema    : vmstat
     flush     : 10s
-    plugin :
-      name   : store_sos
-      config : [ { path : /DATA } ]
+    plugin    : store_sos1
 
-  - name      : sos-procstat
+  sos-procstat :
     daemons   : *l2-agg
     container : ldms_data
     schema    : procstat
     flush     : 10s
-    plugin :
-      name   : store_sos
-      config : [ { path : /DATA } ]
-
-  - name : csv
-    daemons   : *l2-agg
-    container : ldms_data
-    schema    : meminfo
-    plugin :
-      name : store_csv
-      config :
-        - path        : /DATA/csv/
-          altheader   : 0
-          typeheader  : 1
-          create_uid  : 3031
-          create_gid  : 3031
+    plugin    : csv1
 ```
-
