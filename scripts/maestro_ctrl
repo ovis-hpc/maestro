@@ -2,6 +2,9 @@
 import os, sys
 import yaml
 import argparse
+import subprocess
+import socket
+import time
 from ldmsd.parser_util import *
 from collections.abc import Mapping, Sequence
 
@@ -123,6 +126,8 @@ if __name__ == "__main__":
                        help="The path for the generated local configuration files",
                        default=os.path.expanduser('~'), required=False)
     parser.add_argument("--generate-config-path", metavar="STRING", required=False,
+                        help="Path to directory to store generated v4 configuration files for an entire LDMS cluster. "
+                             "Samplers with similar configurations share a single configuration file. ",
                         default=False)
     parser.add_argument("--daemon_name", metavar="STRING", required=False,
                         default=False,
