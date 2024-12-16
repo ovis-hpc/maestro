@@ -11,6 +11,7 @@ import time
 import re
 import socket
 import logging
+import copy
 from ldmsd.ldmsd_communicator import Communicator, fmt_status
 from ldmsd.parser_util import *
 from maestro.maestro_util import *
@@ -101,6 +102,8 @@ class MaestroMonitor(object):
         self.daemons = self.config[self.prefix].get('daemons', dict())
         self.set_samplers()
         self.producers = self.config[self.prefix].get('producers', dict())
+        self.advertisers = copy.deepcopy(self.config[self.prefix].get('advertisers', dict()))
+        self.prdcr_listeners = self.config[self.prefix].get('prdcr_listeners', dict())
         self.set_aggs()
         self.updaters = self.config[self.prefix].get('updaters', dict())
         self.stores = self.config[self.prefix].get('stores', dict())
@@ -332,30 +335,99 @@ class MaestroMonitor(object):
             all_sets[group]['dset_size'] = dset_size
         return all_sets
 
+    def __balance_prdcr_grp(self, group, agg_state):
+        if self.syncobj and group not in self.aggregators:
+            return 0
+        grp_prods = list(self.producers[group].keys())
+        grp_aggs = self.check_aggs(group, agg_state)
+        if len(grp_aggs) == 0:
+            return 1
+        dist_prods = dist_list(grp_prods, len(grp_aggs))
+        for agg in grp_aggs:
+            agg_prods = {}
+            for pl in list(dist_prods):
+                for p in pl:
+                    agg_prods[p] = {}
+                dist_prods.pop(0)
+                if self.syncobj:
+                    if agg not in self.aggregators[group]:
+                        break
+                self.aggregators[group][agg]['prdcrs'] = agg_prods
+                break
+        return 0
+
+    def __balance_advertised_prdcrs(self, group, agg_state):
+        grp_aggs = []
+        for agg in self.ldmsd_state[group]:
+            if self.ldmsd_state[group][agg] == 'ready':
+                grp_aggs.append(agg)
+        if len(grp_aggs) == 0:
+            return 1
+        for comm in self.comms[group]:
+            reconnect = 20
+            print(f'Waiting {reconnect} seconds to allow producer listeners time to recognize advertised producers')
+            time.sleep(reconnect)
+            if self.comms[group][comm].state != self.comms[group][comm].CONNECTED:
+                self.comms[group][comm].reconnect()
+            err, res = self.comms[group][comm].prdcr_status()
+            if err:
+                print(f'Error {err}: getting advertised producers from {comm}: "{res}"')
+                continue
+            ad_prods = fmt_status(res)
+            if not ad_prods:
+                continue
+            break
+        if len(grp_aggs) == 0:
+            # None of the aggregators are running
+            return 1
+        # Assign producers to aggregators
+        # Ensure that all aggregator producer listens have successfully seen all advertisers
+        while True:
+            agg_grp_prods = []
+            for agg in grp_aggs:
+                while True:
+                    err, res = self.comms[group][agg].prdcr_status()
+                    if err and self.ldmsd_state[group][agg] == 'ready':
+                        self.comms[group][agg].reconnect()
+                        continue
+                    else:
+                        break
+                agg_grp_prods.append(fmt_status(res))
+            agg_iters = iter(agg_grp_prods)
+            len_ = len(next(agg_iters))
+            if all(len(agg_iter) == len_ for agg_iter in agg_iters):
+                del agg_grp_prods
+                break
+        idx = 0
+        for agg in grp_aggs:
+            # This code assumes all advertisers in a given aggregator group have been advertised to
+            # all aggregators in the group. As producer advertisers, e.g. sampler-1 can not share a name for all aggregators,
+            # we must make this assumption in order for the load balancing to operate as expected.
+            err, res = self.comms[group][agg].prdcr_status()
+            if err:
+                continue
+            grp_prods = list(prod['name'] for prod in fmt_status(res))
+            agg_prods = {}
+            grp_prods.sort()
+            dist_prods = dist_list(grp_prods, len(grp_aggs))
+            for p in dist_prods[idx]:
+                agg_prods[p] = {}
+            idx += 1
+            if self.syncobj:
+                if agg not in self.aggregators[group]:
+                    continue
+            self.aggregators[group][agg]['prdcrs'] = agg_prods
+        return 0
+
     def __rebalance_prdcrs(self, agg_state):
         for group in self.producers:
-            grp_prods = list(self.producers[group].keys())
-            prod_count = len(grp_prods)
-            grp_aggs = self.check_aggs(group, agg_state)
-            agg_count = len(grp_aggs)
-            if agg_count != 0:
-                prods_per_agg = prod_count // agg_count
-                remainder = prod_count % agg_count
-            else:
-                # None of the aggregators are running
-                break
-            # Assign producers to aggregators
-            prod_idx = 0
-            for agg in grp_aggs:
-                agg_prods = {}
-                for cnt in range(0, prods_per_agg):
-                    agg_prods[grp_prods[prod_idx]] = {}
-                    prod_idx += 1
-                if remainder > 0:
-                    agg_prods[grp_prods[prod_idx]] = {}
-                    prod_idx += 1
-                    remainder -= 1
-                self.aggregators[group][agg]['prdcrs'] = agg_prods
+            rc = self.__balance_prdcr_grp(group, agg_state)
+            if rc:
+                print(f'Aggregators responsible for producers {group} are not responsive')
+        for group in self.prdcr_listeners:
+            rc = self.__balance_advertised_prdcrs(group, agg_state)
+            if rc:
+                print(f'Aggregators responsible for advertisers {group} are not responsive')
 
     def __rebalance_sets(self, agg_state):
         # Build set groups
@@ -396,6 +468,12 @@ class MaestroMonitor(object):
             restart_samplers(self.comms, self.plugins, self.samplers, self.daemons)
             self.res_samplers = False
 
+        # Add advertiser connections
+        add_advertisers(self.comms, self.advertisers, self.daemons)
+        # Add listener connections
+        add_prdcr_listen(self.comms, self.prdcr_listeners, self.aggregators, self.daemons, agg_state)
+
+        print(f'Balancing producers...')
         self.rebalance_handler[self.args.rebalance](agg_state)
 
         # Add all the producers to the aggregators. Any error here is not an issue
@@ -440,12 +518,12 @@ class MaestroMonitor(object):
             print(str(e) + ' ' + str(c.tb_lineno)+'\n')
 
     def query_ldmsd_state(self):
-        ldmsd_state = {}
+        self.ldmsd_state = {}
         for grp_name in self.aggregators:
             group = self.comms[grp_name]
             for name in group:
-                if grp_name not in ldmsd_state:
-                    ldmsd_state[grp_name] = {}
+                if grp_name not in self.ldmsd_state:
+                    self.ldmsd_state[grp_name] = {}
                 comm = group[name]
                 if comm.state != comm.CONNECTED:
                     comm.close()
@@ -462,8 +540,8 @@ class MaestroMonitor(object):
                     print(f'Error getting daemon {name} status')
                     print(f'Error {err}: {msg}')
                     state = 'disconnected'
-                ldmsd_state[grp_name][name] = state
-        return ldmsd_state
+                self.ldmsd_state[grp_name][name] = state
+        return self.ldmsd_state
 
     def cluster_monitor(self):
         last_state = {}
@@ -479,26 +557,26 @@ class MaestroMonitor(object):
                     # NOTE: cond.wait() releases self.lock and blocking waits.
                     #       self.lock is re-acquired when cond.wait() returns.
 
-            ldmsd_state = self.query_ldmsd_state()
-            for group in ldmsd_state:
+            self.ldmsd_state = self.query_ldmsd_state()
+            for group in self.ldmsd_state:
                 # Updated configuration, do full rebalance
                 if group not in last_state:
                     self.do_rebalance = True
-                    last_state = ldmsd_state
+                    last_state = self.ldmsd_state
                     break
-                for dmn in ldmsd_state[group]:
+                for dmn in self.ldmsd_state[group]:
                     if dmn not in last_state[group]:
                         self.do_rebalance = True
-                    elif last_state[group][dmn].lower() != ldmsd_state[group][dmn].lower():
+                    elif last_state[group][dmn].lower() != self.ldmsd_state[group][dmn].lower():
                         self.do_rebalance = True
-                    last_state[group][dmn] = ldmsd_state[group][dmn]
+                    last_state[group][dmn] = self.ldmsd_state[group][dmn]
             if self.do_rebalance:
                 print('Rebalance cluster...')
-                rc = self.rebalance(ldmsd_state)
+                rc = self.rebalance(self.ldmsd_state)
                 if self.args.rebalance == 'sets':
                     n = len(self.aggregators) - 1
                     while n > 0:
-                        self.rebalance(ldmsd_state)
+                        self.rebalance(self.ldmsd_state)
                         n -= 1
                 if not self.do_rebalance:
                     print('Finished load balancing.')
@@ -636,6 +714,84 @@ def add_listeners(comm, dmn_name, listeners):
             print(f'Error adding listening endpoint {ep["name"]}')
             print(f'Error code {rc}: {msg}')
 
+def add_prdcr_listen(comms, prdcr_listen, aggregators, endpoints, agg_state):
+    """Add listeners to aggregators
+
+    Listeners are added to all aggregators in the group. They
+    are in the STANDBY state initially. The "prdcr_listen_start"
+    function will start the "advertised" listeners on the aggregator
+    that have been assigned by the load balancer.
+    """
+    for grp_name in prdcr_listen:
+        grp_prods = set([ pl for pl in prdcr_listen[grp_name]])
+        pl_dict = prdcr_listen[grp_name]
+        for agg_name, agg_host in agg_hosts(grp_name, aggregators, endpoints):
+            if agg_state[grp_name][agg_name] != 'ready' or agg_name not in comms[grp_name]:
+                continue
+            comm = comms[grp_name][agg_name]
+            for pl in pl_dict:
+                rail = check_opt('rail', pl_dict[pl])
+                credits = check_opt('credits', pl_dict[pl])
+                rx_rate = check_opt('rx_rate', pl_dict[pl])
+                regex = check_opt('regex', pl_dict[pl])
+                ip = check_opt('ip', pl_dict[pl])
+                err, res = comm.prdcr_listen_add(pl,
+                                                 regex=regex,
+                                                 disable_start=True,
+                                                 ip=ip)
+                if err:
+                    if err == 17:
+                        continue
+                    print(f'Error {err}: Error adding producer listener to {agg_name}: {res}')
+                else:
+                    print(f'Add producer listener {pl}')
+                err, res = comm.prdcr_listen_start(pl)
+
+def add_advertisers(comms, advertisers, endpoints):
+    """Adds all aggregators referenced to each producer in the group.
+
+    Each producer will have a connection for each aggregator in the group.
+    In the event an aggregator goes down, another aggregator in the group
+    will start listening for  the producers that the downed aggregator was
+    responsible for
+    """
+    for grp_name in advertisers:
+        ad_dict = advertisers[grp_name]
+        ad_names = expand_names(ad_dict['names'])
+        for cname in endpoints[grp_name]:
+            comm = comms[grp_name][cname]
+            auth, plugin, auth_opt = check_auth(ad_dict)
+            if auth != comm.auth:
+                err, res = comm.auth_add(auth, plugin, auth_opt)
+                if err:
+                    if err == 17:
+                        continue
+                    print(f'Error {err} adding authentication domain {auth} to {cname}: {res}')
+            for host in expand_names(ad_dict['hosts']):
+                ad_name = f'{ad_names[0]}-{host}'
+                rail = check_opt('rail', ad_dict)
+                credits = check_opt('credits', ad_dict)
+                rx_rate = check_opt('rx_rate', ad_dict)
+                perm = check_opt('perm', ad_dict)
+                err, res = comm.advertiser_add(ad_name,
+                                               ad_dict['xprt'],
+                                               host,
+                                               ad_dict['port'],
+                                               ad_dict['reconnect'],
+                                               auth=auth,
+                                               perm=perm
+                )
+                if err:
+                    if err == 17:
+                        continue
+                    print(f'Error {err}: Error adding advertiser to {cname}: {res}')
+                err, res = comm.advertiser_start(ad_name)
+                if err:
+                    print(f'Error {err}: Error starting advertiser {cname}: {res}')
+                else:
+                    print(f'Started advertiser {ad_name} on {cname}')
+            ad_names.pop(0)
+
 def add_producers(comms, producers, aggregators, endpoints, agg_state):
     """Add producers to Aggregators
 
@@ -690,10 +846,12 @@ def add_producers(comms, producers, aggregators, endpoints, agg_state):
                 endpoint = endpoints[dmn_grp][dmn]['endpoints'][ep_name]
                 hostname = endpoints[dmn_grp][dmn]['addr']
                 auth = check_opt('auth', endpoint)
+                cache_ip = check_opt('cache_ip', prod)
+                perm = check_opt('perm', prod)
                 comm.prdcr_add(
                             prod_name, prod['type'],
                             endpoint['xprt'], hostname, endpoint['port'],
-                            prod['reconnect'], auth=auth)
+                            prod['reconnect'], auth=auth, perm=perm, cache_ip=cache_ip)
     return True
 
 def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
@@ -713,6 +871,7 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                 comm = comms[grp_name][agg_name]
                 # the updater may already exist, in which case the add will fail
                 offset = check_opt('offset', updtr)
+                perm = check_opt('perm', updtr)
                 rc, msg = comm.updtr_status()
                 try:
                     prdcr_updtr_status = fmt_status(msg)
@@ -732,13 +891,13 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                         if rc:
                             print(f'Error removing updater {agg_updtr}: {err}')
                 if updtr['mode'] == 'auto' or updtr['mode'] == 'auto_interval':
-                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, auto=True)
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, auto=True, perm=perm)
                 elif updtr['mode'] == 'push':
-                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push=True)
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push=True, perm=perm)
                 elif updtr['mode'] == 'onchange':
-                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push='onchange')
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push='onchange', perm=perm)
                 else:
-                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset)
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, perm=perm)
 
                 if rc:
                     if rc != 17:
@@ -782,6 +941,8 @@ def add_stores(comms, plugins, stores, aggregators, daemons, agg_state):
                 plugin = plugins[plugin_name]
                 # When multi-instance plugins are introduced, this line will no longer be needed
                 store_args['plugin'] = plugin['name']
+                perm = check_opt('perm', plugin)
+                store_args['perm'] = perm
                 err, res = comm.plugn_load(plugin['name'])
                 for cfg_ in plugin['config']:
                     if type(cfg_) is dict:
@@ -902,9 +1063,6 @@ if __name__ == "__main__":
                         help="Start ldms aggregator daemon's")
     parser.add_argument("--timeout", metavar="INT", required=False, type=int,
                         default=15)
-    parser.add_argument("--version", metavar="VERSION",
-                        help="The OVIS version for the output syntax (4 or 5), default is 4",
-                        default=4)
     parser.add_argument("--log-level", default="info",
                         help="Log level (debug, info, warn, error, fatal)")
     parser.add_argument("--debug", action='store_true',
@@ -947,13 +1105,3 @@ if __name__ == "__main__":
     # when an aggregator needs to pick up the load from a
     # failed peer
     maestro.cluster_monitor()
-    # evq = queue.Queue()
-    # mthread = threading.Thread(target=cluster_monitor)
-    # mthread.start()
-    # evq.join()
-
-    # config = Cluster(etcd_spec, conf_spec)
-    # config.balance()
-    # config.commit()
-    # if args.dump:
-    #    config.dump_config(args.prefix, args.version)

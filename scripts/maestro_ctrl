@@ -26,6 +26,8 @@ class MaestroCtrl(YamlCfg):
         if obj is None:
             if path.split("/")[-1] in CORE_ATTRS:
                 print(f'{path.split("/")[-1]} not present in ldms yaml configuration file.\nContinuing..')
+            else:
+                obj = "None"
         elif isinstance(obj, Mapping):
             for key in obj:
                 safe_key = self.check_key(key)
@@ -45,6 +47,8 @@ class MaestroCtrl(YamlCfg):
     def save_config(self):
         try:
             self.client.delete_prefix('/' + self.name)
+            self.walk(self.advertisers, '/' + self.name + '/advertisers')
+            self.walk(self.prdcr_listeners, '/' + self.name + '/prdcr_listeners')
             self.walk(self.daemons, '/' + self.name + '/daemons')
             self.walk(self.aggregators, '/' + self.name + '/aggregators')
             self.walk(self.producers, '/' + self.name + '/producers')
@@ -123,9 +127,6 @@ if __name__ == "__main__":
     parser.add_argument("--daemon_name", metavar="STRING", required=False,
                         default=False,
                         help="Daemon name to generate configuration from YAML file")
-    parser.add_argument("--version", metavar="VERSION",
-                        help="The OVIS version for the output syntax (4 or 5), default is 4",
-                        default=4)
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug information")
     args = parser.parse_args()
