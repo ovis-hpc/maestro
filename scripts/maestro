@@ -688,11 +688,11 @@ def stop_samplers(comms, samplers, daemons):
                     print(f'Stopped {plugn["name"]} on {smplr}')
     return True
 
-def restart_samplers(comms, samplers, daemons):
+def restart_samplers(comms, plugins, samplers, daemons):
     # Stop all sampler plugins on samplers specified and restart them
     # Does not reconfigure samplers
     rc = stop_samplers(comms, samplers, daemons)
-    rc = start_samplers(comms, samplers, daemons)
+    rc = start_samplers(comms, plugins, samplers, daemons)
 
 def add_listeners(comm, dmn_name, listeners):
     for ep in listeners:
