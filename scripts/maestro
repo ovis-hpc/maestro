@@ -13,6 +13,7 @@ import socket
 import logging
 import copy
 from ldmsd.ldmsd_communicator import Communicator, fmt_status
+from ldmsd.parser_util import *
 from maestro.maestro_util import *
 
 def agg_hosts(grp_name, aggs, daemons):
@@ -216,6 +217,7 @@ class MaestroMonitor(object):
         self.set_aggs()
         self.updaters = copy.deepcopy(self.config[self.prefix].get('updaters', dict()))
         self.stores = copy.deepcopy(self.config[self.prefix].get('stores', dict()))
+        self.plugins = copy.deepcopy(self.config[self.prefix].get('plugins', dict()))
 
     def set_aggs(self):
         if 'aggregators' in self.config[self.prefix]:
@@ -265,7 +267,7 @@ class MaestroMonitor(object):
                     rc = comm.connect(timeout=args.timeout)
                     if rc:
                         print(f'Error: {rc}')
-                        print(f'Failed to communicate with aggregator {dmn_name} on endpoint {ep["name"]}')
+                        print(f'Failed to communicate with LDMSD {dmn_name} on endpoint {ep["name"]}')
                     comms[dmn_grp][dmn_name] = comm
                     add_listeners(comm, dmn_name, listen)
         return comms
@@ -309,7 +311,7 @@ class MaestroMonitor(object):
                     cfg_smplrs[dmn_grp][sampler] = self.daemons[dmn_grp][sampler]
                 elif len(msg) == len(self.samplers[dmn_grp]['plugins']):
                     for plugin in self.samplers[dmn_grp]['plugins']:
-                        print(f'Sampler {plugin["name"]} has already been started on {sampler}')
+                        print(f'Sampler {plugin} has already been started on {sampler}')
         return cfg_smplrs
 
     def load_config(self):
@@ -592,12 +594,12 @@ class MaestroMonitor(object):
         cfg_sampler_eps = self.check_samplers()
         if not self.res_samplers:
             if cfg_sampler_eps:
-                config_samplers(self.comms, self.samplers, cfg_sampler_eps)
-                start_samplers(self.comms, self.samplers, cfg_sampler_eps)
+                config_samplers(self.comms, self.plugins, self.samplers, cfg_sampler_eps)
+                start_samplers(self.comms, self.plugins, self.samplers, cfg_sampler_eps)
         else:
             if cfg_sampler_eps:
-                config_samplers(self.comms, self.samplers, cfg_sampler_eps)
-            restart_samplers(self.comms, self.samplers, self.daemons)
+                config_samplers(self.comms, self.plugins, self.samplers, cfg_sampler_eps)
+            restart_samplers(self.comms, self.plugins, self.samplers, self.daemons)
             self.res_samplers = False
         # Add advertiser connections
         add_advertisers(self.comms, self.advertisers, self.daemons)
@@ -614,7 +616,7 @@ class MaestroMonitor(object):
         if rc:
             self.do_rebalance=True
             return 1
-        add_stores(self.comms, self.stores, self.aggregators, self.daemons, agg_state)
+        add_stores(self.comms, self.plugins, self.stores, self.aggregators, self.daemons, agg_state)
         # Start the producers assigned to each of the Aggregators
         start_producers(self.comms, self.aggregators, agg_state)
         stream_subscribe(self.comms, self.producers, self.aggregators, self.daemons, agg_state)
@@ -770,7 +772,7 @@ class MaestroMonitor(object):
             self.lock.release()
             time.sleep(self.args.timeout)
 
-def config_samplers(comms, samplers, daemons):
+def config_samplers(comms, plugins, samplers, daemons):
     """Configure and load plugins for sampler daemons"""
     for smplr_group in samplers:
         for smplr in daemons[smplr_group]:
@@ -784,7 +786,8 @@ def config_samplers(comms, samplers, daemons):
                 print(f'config_samplers: lost connectivity to {smplr} err {err}: {res}')
                 return False
             print(f'Adding sampler plugins to sampler {smplr}')
-            for plugin in samplers[smplr_group]['plugins']:
+            for plugn in samplers[smplr_group]['plugins']:
+                plugin = plugins[plugn]
                 err, rc = comm.plugn_load(plugin['name'])
                 if err == 17:
                     print(f'File exists: {rc}')
@@ -832,7 +835,7 @@ def start_agg_daemons(aggregators, start_aggs):
                                         '-m', '2g',
                                         '-r', 'log/'+dmn_name+'.pid'])
 
-def start_samplers(comms, samplers, daemons):
+def start_samplers(comms, plugins, samplers, daemons):
     for smplr_group in samplers:
         for smplr in daemons[smplr_group]:
             smplr_host = daemons[smplr_group][smplr]
@@ -843,7 +846,8 @@ def start_samplers(comms, samplers, daemons):
                 print(f'start_samplers: lost connectivity to {smplr} err {err}: {res}')
                 return False
             smplrs = comm.smplr_status()
-            for plugin in samplers[smplr_group]['plugins']:
+            for plugn in samplers[smplr_group]['plugins']:
+                plugin = plugins[plugn]
                 print(f'Starting.. {plugin["name"]} on {smplr}')
                 interval = check_opt('interval', plugin)
                 offset = check_opt('offset', plugin)
@@ -879,7 +883,7 @@ def restart_samplers(comms, samplers, daemons):
     # Stop all sampler plugins on samplers specified and restart them
     # Does not reconfigure samplers
     rc = stop_samplers(comms, samplers, daemons)
-    rc = start_samplers(comms, samplers, daemons)
+    rc = start_samplers(comms, plugins, samplers, daemons)
 
 def add_listeners(comm, dmn_name, listeners):
     for ep in listeners:
@@ -1065,6 +1069,7 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                 comm = comms[grp_name][agg_name]
                 # the updater may already exist, in which case the add will fail
                 offset = check_opt('offset', updtr)
+                perm = check_opt('perm', updtr)
                 rc, msg = comm.updtr_status()
                 try:
                     prdcr_updtr_status = fmt_status(msg)
@@ -1084,13 +1089,13 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                         if rc:
                             print(f'Error removing updater {agg_updtr}: {err}')
                 if updtr['mode'] == 'auto' or updtr['mode'] == 'auto_interval':
-                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, auto=True)
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, auto=True, perm=perm)
                 elif updtr['mode'] == 'push':
-                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push=True)
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push=True, perm=perm)
                 elif updtr['mode'] == 'onchange':
-                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push='onchange')
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, push='onchange', perm=perm)
                 else:
-                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset)
+                    rc, msg = comm.updtr_add(agg_updtr, interval=updtr['interval'], offset=offset, perm=perm)
 
                 if rc:
                     if rc != 17:
@@ -1117,13 +1122,15 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                     rc = 1
     return rc
 
-def add_stores(comms, stores, aggregators, daemons, agg_state):
+def add_stores(comms, plugins, stores, aggregators, daemons, agg_state):
     """
     Add stores to Aggregators
     """
     for grp_name in stores:
         grp_stores = stores[grp_name]
         for store_name in grp_stores:
+            # This will be used when multi-instance plugins are introduced
+            loaded_plugins = []
             store = grp_stores[store_name]
             for agg_name, agg_host in agg_hosts(grp_name, aggregators, daemons):
                 if agg_state[grp_name][agg_name] != 'ready' or agg_name not in comms[grp_name]:
@@ -1131,9 +1138,12 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
                 comm = comms[grp_name][agg_name]
                 store_args = fmt_cmd_args(comm, 'strgp_add', store)
                 # Load and configure the plugin required by the store
-                plugin = store['plugin']
-                plugin_name = plugin['name']
-                err, res = comm.plugn_load(plugin_name)
+                plugin_name = store['plugin']
+                plugin = plugins[plugin_name]
+                store_args['plugin'] = plugin['name']
+                perm = check_opt('perm', store)
+                store_args['perm'] = perm
+                err, res = comm.plugn_load(plugin['name'])
                 for cfg_ in plugin['config']:
                     if type(cfg_) is dict:
                         cfg_str = parse_to_cfg_str(cfg_)
@@ -1142,6 +1152,8 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
                     err, msg = comm.plugn_config(plugin['name'], cfg_str)
                     if err:
                         print(f'Error {err}: {msg}')
+                    else:
+                        loaded_plugins.append(plugin_name)
 
                 flush = check_opt('flush', store)
                 ## the stores may already exist, in which case the add will fail
@@ -1149,7 +1161,7 @@ def add_stores(comms, stores, aggregators, daemons, agg_state):
                     store_args['decomposition'] = store['decomp']
                 err, res = comm.strgp_add(**store_args)
                 if err:
-                    print(f'Error adding storage policy {store_name}: {res}')
+                    print(f'Error: {errno.ENOENT} adding storage policy {store_name}: {res}')
                     print(f'Continue without adding "{store_name}"')
                     continue
                 ## Add producers
@@ -1223,6 +1235,8 @@ def stream_subscribe(comms, producers, aggregators, endpoints, agg_state):
                 else:
                     regex = '.*'
                 rx_rate = check_opt('rx_rate', stream)
+                if not rx_rate:
+                    rx_rate = '-1'
                 rc, err = comm.prdcr_subscribe(regex, stream['stream'], rx_rate)
                 if rc:
                     print(f'Error {rc} subscribing to stream {stream["stream"]}: {err}.')
@@ -1245,9 +1259,6 @@ if __name__ == "__main__":
                         help='Specify "producers" to balance producers across aggregators,\n'\
                              'or "sets" to balance metric sets across aggregators.\n'\
                              'Defaults to "producers"')
-    #parser.add_argument("--dump", action="store_true",
-    #                    help="Dump the load-balanced aggregation configuration files")
-
     parser.add_argument("--prefix", metavar="STRING", required=True,
                         help="The prefix for the ldms cluster configurations",
                         default="unknown")
@@ -1308,5 +1319,3 @@ if __name__ == "__main__":
     # config = Cluster(etcd_spec, conf_spec)
     # config.balance()
     # config.commit()
-    # if args.dump:
-    #    config.dump_config(args.prefix, args.version)
