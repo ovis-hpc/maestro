@@ -1,52 +1,45 @@
-# LDMS daemon and communication endpoint information for maestro
+# LDMS daemon and communication endpoint information
 daemons:
-  - names : "sampler-1"
-    hosts : "node-1"
+  - names : &samplers "sampler-[1-8]"
+    hosts : &sampler-hosts "node-[1-8]"
+    environment :
+      LDMSD_MEM_SZ : "1g"
     endpoints :
-      - names : "node-1"
-        ports : 10002
+      - names : &sampler-endpoints "node-[1-8]-[10002-10003]"
+        ports : &sampler-ports "[10002-10003]"
         maestro_comm : True
         xprt  : sock
         auth  :
-           name : munge1
-           plugin : munge
-
-  - names : &samplers "sampler-[2-8]"
-    hosts : &orion-hosts "node-[2-8]"
-    endpoints :
-      - names : &sampler-endpoints "node-[2-8]-10002"
-        ports : &sampler-ports 10002
-        maestro_comm : True
-        xprt  : sock
-        auth  :
-           name : munge1
-           plugin : munge
+           name : ovis1
+           plugin : ovis
+           conf : /opt/ovis/etc/secret-root.conf
 
   - names : &l1-agg "l1-aggs-[1-3]"
-    hosts : &l1-agg-hosts "node-1"
+    hosts : &l1-agg-hosts "node-[2-4]"
     endpoints :
-      - names : &l1-agg-endpoints "node-1-[10401-10403]"
-        ports : &l1-agg-ports "[10401-10403]"
+      - names : &l1-agg-endpoints "node-[2-4]-10401"
+        ports : &l1-agg-ports 10401
         maestro_comm : True
         xprt  : sock
         auth  :
           name : munge1
           plugin : munge
 
-        # Listen on endpoints described below with maestro_comm : False
-      - names : "l1-listener-[1-3]"
-        hosts : "node-[1-3]"
-        ports : 10404
-        maestro_comm : False
-        xprt : sock
-        auth :
-            name : munge1
-            plugin : munge
+       # If maestro_comm : false maestro will not create a transport to the LDMSD at this endpoint but
+       # the LDMSD will be configured to listen on endpoints described below
+       - names : "l1-listener-[1-3]"
+         hosts : "node-[1-3]"
+         ports : 10404
+         maestro_comm : False
+         xprt : sock
+          auth :
+              name : munge1
+              plugin : munge
 
   - names : &l2-agg "l2-agg"
-    hosts : &l2-agg-hosts "node-1"
+    hosts : &l2-agg-hosts "node-02"
     endpoints :
-      - names : &l2-agg-endpoint "node-1-10104"
+      - names : &l2-agg-endpoint "node-02-10104"
         ports : &l2-agg-ports "10104"
         maestro_comm : True
         xprt  : sock
@@ -58,60 +51,24 @@ daemons:
 aggregators:
   - daemons   : *l1-agg
     peers     :
-      - daemons   : "sampler-1"
-        endpoints : "node-1-10002"
-        reconnect : 20s
-        type      : active
-        credits   : -1 # Optional. Send credits the aggregator advertises to the producer. Default -1 is unlimited.
-        rx_rate   : -1 # Optional. Receive rate (bytes/sec) limit for this connection. Default -1 is unlimited.
-        rail      : 1 # Optional. The number of rail endpoints for the producer.
-        updaters  : 
-          - mode     : auto
-            interval : "1.0s"
-            offset   : "0ms"
-            sets     :
-              - regex : .*
-                field : inst
-
       - daemons   : *samplers
         endpoints : *sampler-endpoints
         reconnect : 20s
         type      : active
-        updaters  :
+        updaters  : # The following are possible usages of each updater mode
           - mode     : auto
             interval : "1.0s"
             offset   : "0ms"
-            sets     :
+            sets :
               - regex : .*
                 field : inst
-          # The following are possible usages of each updater mode. auto and auto_interval are interchangeable.
-          # If mode is not specified, updater mode defaults to "pull" at the specified interval.
-          #- mode     : push
-          #  interval : "1.0s"
-          #  offset   : "0ms"
-          #  sets     :
-          #    - regex : .*
-          #      field : inst
-          #
-          #- mode     : onchange
-          #  interval : "1.0s"
-          #  offset   : "0ms"
-          #  sets     :
-          #    - regex : .*
-          #      field : inst
-          #
-          #- mode     : pull
-          #  interval : "1.0s"
-          #  offset   : "0ms"
-          #  sets     :
-          #    - regex : .*
-          #      field : inst
 
     # Example prdcr_subscribe configuration
-    subscribe:
-      - stream: kokkos-perf-data # Stream name
-        regex: .* # Regular expression that matches producer names
-        rx_rate   : -1 # Optional. Receive rate (bytes/sec) limit for this connection. Default -1 is unlimited.
+    #   subscribe:
+    #     - stream: kokkos-perf-data # Stream name
+    #       regex: .* # Regular expression that matches producer names
+    #       rx_rate   : -1 # Optional. Receive rate (bytes/sec) limit for this connection. Default -1 is unlimited.
+    #
 
   - daemons : *l2-agg
     peers :
@@ -122,86 +79,64 @@ aggregators:
         updaters:
           - mode : auto
             interval : "1.0s"
-            offset : "0ms"
-            sets:
-              - regex : .*
-                field : inst
+            offset   : "0ms"
+            #sets     : # sets dictionary is not required, defaults to all update from all producer metric sets
+            #  - regex : meminfo
+            #    field : schema
 
-# Sampler plugin configuration
 samplers:
-  - daemons : "sampler-1"
-    plugins :
-      - name        : meminfo # Variables can be specific to plugin
-        interval    : 1.0s # Used when starting the sampler plugin
-        offset      : "0s"
-        config : [ 'schema=meminfo producer=sampler-1 instance=sampler-1/meminfo perm=0777' ]
-
-      - name        : vmstat
-        interval    : "2.0s"
-        offset      : "1ms"
-        config : 
-          - 'schema=vmstat producer=sampler-1 instance=sampler-1/vmstat perm=0777'
-
-      - name        : procstat
-        interval    : "4.0s"
-        offset      : 2ms
-        config :
-          - schema : procstat
-            component_id : "${LDMS_COMPONENT_ID}"
-            perm : "0777"
-
   - daemons : *samplers
-    plugins : # Attributes can be specific to plugin
-      - name        : meminfo
-        interval    : 1.0s # Used when starting the sampler plugin
-        offset      : "0s"
-        config : # If instance/producer are not defined, producer defaults to ${HOSTNAME} and instance defaults to <producer name>/<plugin name>
-          - schema : meminfo
-            component_id : "${LDMS_COMPONENT_ID}"
-            perm  : "0777"
+    plugins : [ meminfo1, vmstat1 ]
 
-      - name        : vmstat
-        interval    : "2.0s"
-        offset      : "1ms"
-        config :
-          - schema : vmstat
-            component_id : "${LDMS_COMPONENT_ID}"
-            perm  : "0777"
+plugins:
+  meminfo1 :
+    name     : meminfo # Variables can be specific to plugin
+    interval : 1.0s # Used when starting the sampler plugin
+    offset   : "0s"
+    config : # If instance/producer are not defined, producer defaults to ${HOSTNAME} and instance defaults to <producer name>/<plugin name>
+      - schema : meminfo
+        perm : "0777"
 
-      - name        : procstat
-        interval    : "4.0s"
-        offset      : 2ms
-        config :
-          - schema : procstat
-            component_id : "${LDMS_COMPONENT_ID}"
-            perm  : "0777"
+  vmstat1 :
+    name     : vmstat
+    interval : "8.0s"
+    offset   : "1ms"
+    config :
+      - schema : vmstat
+        perm  : "0777"
+
+  procstat1 :
+    name     : procstat
+    interval : "4.0s"
+    offset   : 2ms
+    config :
+      - schema : procstat
+        perm : "0777"
+
+  store_sos1 :
+    name : store_sos
+    config : [{ path : /home/DATA}]
 
 # Storage policy configuration
-stores:
+stores :
   - name      : sos-meminfo
     daemons   : *l2-agg
     container : ldms_data
-    schema    : meminfo 
+    schema    : meminfo
     flush     : 10s
-    plugin :
-      name   : store_sos
-      config : [ 'path=/home/nick/DATA' ]
+    plugin : store_sos1
 
   - name      : sos-vmstat
     daemons   : *l2-agg
     container : ldms_data
     schema    : vmstat
     flush     : 10s
-    plugin :
-      name   : store_sos
-      config : [ { path : /home/nick/DATA } ]
+    plugin : store_sos1
 
   - name      : sos-procstat
     daemons   : *l2-agg
     container : ldms_data
     schema    : procstat
     flush     : 10s
-    plugin :
-      name   : store_sos
-      config : [ { path : /home/nick/DATA } ]
+    plugin : store_sos1
 

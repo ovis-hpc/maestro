@@ -1,6 +1,6 @@
 daemons:
   - names : &samplers "sampler-[1-8]"
-    hosts : &orion-hosts "node-[01-08]"
+    hosts : &sampler-hosts "node-[01-08]"
     endpoints :
       - names : &sampler-endpoints "node-[01-08]-10002"
         ports : &sampler-ports 10002
@@ -11,7 +11,7 @@ daemons:
             plugin : ovis
             conf : /opt/ovis/etc/secret.conf
 
-  - names : &l1-agg "l1-aggs-[1-3]"
+  - names : &l1-agg "l1-agg-[1-3]"
     hosts : &l1-agg-hosts "node-[01-03]"
     endpoints :
       - names : &l1-agg-endpoints "node-[01-03]-10401"
@@ -23,9 +23,9 @@ daemons:
             plugin : munge
 
   - names : &l2-agg "l2-agg"
-    hosts : &l2-agg-hosts "node-02"
+    hosts : &l2-agg-hosts "node-01"
     endpoints :
-      - names : &l2-agg-endpoint "node-02-10104"
+      - names : &l2-agg-endpoint "node-01-10104"
         ports : &l2-agg-ports "10104"
         maestro_comm : True
         xprt  : sock
@@ -48,7 +48,7 @@ aggregators:
         # All of the following are optional arguments
         #regex    : # Regular expression matching sampler hostnames
         #rail     :  
-        #credits  :
+        #quota    :
         #rx_rate  :
 
   - daemons : *l2-agg
@@ -66,47 +66,55 @@ aggregators:
                 field : inst
 samplers:
   - daemons : *samplers
-    advertise: # Uses the endpoints defined in the daemons section
-        names     : *samplers 
-        hosts     : *l1-agg-hosts # Daemons defined in the "daemons" dictionary to advertise "to" 
-        xprt      : sock
-        port      : 10401
-        reconnect : 20s
-        auth      :
-          name : munge
+    advertise :
+      names     : *samplers
+      hosts     : *l1-agg-hosts # Daemons defined in the "daemons" dictionary to advertise "to"
+      xprt      : sock
+      port      : 10401
+      reconnect : 20s
+      auth      :
+        name : munge
+    plugins : [ meminfo1, vmstat1, procstat1, loadavg1 ]
         # The following are optional arguments
-        #perm     : 0o777
+        #perm     : "0777"
         #rail     : 1
-        #credits  : 
+        #quota    :
         #rx_rate  :
-    plugins :
-      - name        : meminfo # Variables can be specific to plugin
-        interval    : 1.0s # Used when starting the sampler plugin
-        offset      : "0s"
-        config :
-          - schema : meminfo
-            perm : "0777"
+plugins :
+  meminfo1:
+    name        : meminfo
+    interval    : "8.0s"
+    offset      : "1ms"
+    config :
+      - schema : meminfo
+        perm  : "0777"
 
-      - name        : vmstat
-        interval    : "8.0s"
-        offset      : "1ms"
-        config :
-          - schema : vmstat
-            perm  : "0777"
+  vmstat1 :
+    name        : vmstat
+    interval    : "8.0s"
+    offset      : "1ms"
+    config :
+      - schema : vmstat
 
-      - name        : procstat
-        interval    : "4.0s"
-        offset      : 2ms
-        config :
-          - schema : procstat
-            perm : "0777"
+  procstat1 :
+    name        : procstat
+    interval    : "4.0s"
+    offset      : 2ms
+    config :
+      - schema : procstat
+        perm : "0777"
 
-      - name        : loadavg
-        interval    : "4.0s"
-        offset      : 2ms
-        config :
-          - schema : loadavg
-            perm : "0777"
+  loadavg1 :
+    name        : loadavg
+    interval    : "4.0s"
+    offset      : 2ms
+    config :
+      - schema : loadavg
+        perm : "0777"
+
+  store_sos1 :
+    name     : store_sos
+    config : [{ path : /home/DATA-TOP }]
 
 stores:
   - name      : sos-meminfo
@@ -114,25 +122,18 @@ stores:
     container : ldms_data
     schema    : meminfo
     flush     : 10s
-    plugin :
-        name   : store_sos
-        config : [{ path : /home/DATA }]
+    plugin    : store_sos1
 
-  - name      : sos-vmstat
+  - name : sos-vmstat
     daemons   : *l2-agg
     container : ldms_data
     schema    : vmstat
     flush     : 10s
-    plugin :
-        name   : store_sos
-        config : [{ path : /home/DATA }]
+    plugin : store_sos1
 
   - name      : sos-procstat
     daemons   : *l2-agg
     container : ldms_data
     schema    : procstat
     flush     : 10s
-    plugin :
-        name   : store_sos
-        config : [{ path : /home/DATA }]
-
+    plugin : store_sos1
