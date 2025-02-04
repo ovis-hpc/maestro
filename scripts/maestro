@@ -902,7 +902,7 @@ def add_updaters(comms, updaters, aggregators, daemons, agg_state, rb=None):
                 if rc:
                     if rc != 17:
                         print(f'Error {rc}: {msg} adding updater {updtr_name} to {agg_host["name"]}')
-                if type(updtr['producers'] is list:
+                if type(updtr['producers']) is list:
                     for regex in updtr['producers']:
                         comm.updtr_prdcr_add(agg_updtr, regex)
                 else:
