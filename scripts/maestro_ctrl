@@ -95,7 +95,7 @@ class MaestroCtrl(YamlCfg):
                     if dmn_grp in self.samplers and dmn in self.samplers[dmn_grp]:
                         fd = open(f'{local_path}/{dmn}.conf', 'w+')
                         dstr = ''
-                        dstr = self.write_samplers(dstr, dmn_grp)
+                        dstr = self.write_samplers(dstr, dmn_grp, args.local)
                         dstr, auth_list = self.write_listeners(dstr, dmn_grp, dmn, auth_list)
                         fd.write(dstr)
                     if fd:
