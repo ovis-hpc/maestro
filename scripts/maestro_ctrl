@@ -108,7 +108,7 @@ class MaestroCtrl(YamlCfg):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="LDMS Monitoring Cluster Configuration")
-    parser.add_argument("--ldms_config", metavar="FILE", required=True,
+    parser.add_argument("--ldms-config", metavar="FILE", required=True,
                         help="The ldmsd load balance domain configuration file. "
                         "This will not start the maestro "
                         "load balancer")
@@ -119,14 +119,14 @@ if __name__ == "__main__":
                         default="unknown")
     local = parser.add_mutually_exclusive_group()
     local.add_argument("--local", action='store_true', default=False, help="Start maestro_ctrl in local mode")
-    parser.add_argument("--local_path", metavar="STRING",
+    parser.add_argument("--local-path", metavar="STRING",
                        help="The path for the generated local configuration files",
                        default=os.path.expanduser('~'), required=False)
     parser.add_argument("--generate-config-path", metavar="STRING", required=False,
                         help="Path to directory to store generated v4 configuration files for an entire LDMS cluster. "
                              "Samplers with similar configurations share a single configuration file. ",
                         default=False)
-    parser.add_argument("--daemon_name", metavar="STRING", required=False,
+    parser.add_argument("--daemon-name", metavar="STRING", required=False,
                         default=False,
                         help="Daemon name to generate configuration from YAML file")
     parser.add_argument("--debug", action="store_true",
@@ -156,7 +156,7 @@ if __name__ == "__main__":
         # Use the 1st host for now
         client = etcd3.client(host=etcd_hosts[0][0], port=etcd_hosts[0][1],
             grpc_options=[ ('grpc.max_send_message_length',16*1024*1024),
-                       ('grpc.max_receive_message_length',16*1024*1024)])
+                           ('grpc.max_receive_message_length',16*1024*1024)])
     else:
         client = None
         args.prefix = None

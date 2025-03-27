@@ -22,20 +22,12 @@ class DaemonDict(SyncObjConsumer):
         self.__daemons[mi] = data
 
     @replicated
-    def setDaemonGroup(self, mi, group, data):
-        self.__daemons[mi][group] = data
+    def setDaemon(self, mi, dmn, data):
+        self.__daemons[mi][dmn] = data
 
     @replicated
-    def setDaemon(self, mi, group, dmn, data):
-        self.__daemons[mi][group][dmn] = data
-
-    @replicated
-    def updateDaemonGroup(self, mi, group, data):
-        self.__daemons[mi][group].update(data)
-
-    @replicated
-    def updateDaemon(self, mi, group, dmn, data):
-        self.__daemons[mi][group][dmn].update(data)
+    def updateDaemon(self, mi, dmn, data):
+        self.__daemons[mi][dmn].update(data)
 
     def __getitem__(self, key):
         if key not in self.__daemons:
@@ -48,8 +40,8 @@ class DaemonDict(SyncObjConsumer):
     def getMaestroGroup(self, mi):
         return self.__daemons[mi]
 
-    def getDaemonGroup(self, mi, group):
-        return self.__daemons[mi][group]
+    def getDaemon(self, mi, dmn):
+        return self.__daemons[mi][dmn]
 
     def items(self):
         return self.__daemons.items()
