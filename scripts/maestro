@@ -260,6 +260,7 @@ class MaestroMonitor(object):
                                             ep['auth']['plugin'],
                                             { 'conf' : conf })
                     except Exception as e:
+                        raise
                         print(f'Error initializing transport to ldmsd {dmn_name} at endpoint {ep_name} '\
                               f'on port {ep["port"]} with transport {ep["xprt"]}')
                         print(f'{e}')
@@ -1304,6 +1305,13 @@ if __name__ == "__main__":
     # have multiple monitoring hosted by the same consensus cluster.
 
     maestro = MaestroMonitor(etcd_spec, args)
+
+    # schemaregistry
+    sr_config = etcd_spec.get('schema_registry')
+    if sr_config:
+        from maestro.schema_registry import SchemaRegistry
+        sr = SchemaRegistry(etcd_spec)
+        sr.start()
 
     # At each load-balance group level the aggregators have all
     # producers; however, only the producers assigned to each
