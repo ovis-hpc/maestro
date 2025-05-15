@@ -288,21 +288,21 @@ plugins:
 
 # Storage policy configuration
 stores :
-  - name      : sos-meminfo
+  sos-meminfo :
     daemons   : *l2-agg
     container : ldms_data
     schema    : meminfo
     flush     : 10s
     plugin : store_sos1
 
-  - name      : sos-vmstat
+  sos-vmstat :
     daemons   : *l2-agg
     container : ldms_data
     schema    : vmstat
     flush     : 10s
     plugin : store_sos1
 
-  - name      : sos-procstat
+  csv-procstat
     daemons   : *l2-agg
     container : ldms_data
     schema    : procstat

@@ -784,7 +784,7 @@ def config_samplers(comms, plugins, samplers, cfg_smplrs):
             print(f'Adding sampler plugins to sampler {smplr}')
             for plugn in samplers[smplr_group]['plugins']:
                 plugin = plugins[plugn]
-                err, rc = comm.plugn_load(plugin['name'])
+                err, rc = comm.plugn_load(plugn, plugin['name'])
                 if err == 17:
                     print(f'File exists: {rc}')
                 elif err != 0:
@@ -795,7 +795,7 @@ def config_samplers(comms, plugins, samplers, cfg_smplrs):
                 for cfg_ in plugin['config']:
                     if type(cfg_) is dict:
                         cfg_args = { 'producer'     : smplr,
-                                     'instance'     : smplr +'/'+plugin['name'],
+                                     'instance'     : smplr +'/'+plugn,
                                      'component_id' : '${LDMS_COMPONENT_ID}' }
                         # Set component_id to default env variable if not specified
                         for attr in cfg_:
@@ -805,7 +805,7 @@ def config_samplers(comms, plugins, samplers, cfg_smplrs):
                         cfg_str = parse_to_cfg_str(cfg_args)
                     else:
                         cfg_str = cfg_
-                    err, msg = comm.plugn_config(plugin['name'], cfg_str)
+                    err, msg = comm.plugn_config(plugn, cfg_str)
                     if err:
                         print(f'Error: {err} {msg} configuring {smplr}')
                         continue
@@ -844,12 +844,12 @@ def start_samplers(comms, plugins, samplers, daemons):
             smplrs = comm.smplr_status()
             for plugn in samplers[smplr_group]['plugins']:
                 plugin = plugins[plugn]
-                print(f'Starting.. {plugin["name"]} on {smplr}')
+                print(f'Starting.. {plugn} on {smplr}')
                 interval = check_opt('interval', plugin)
                 offset = check_opt('offset', plugin)
-                rc, msg = comm.plugn_start(plugin['name'], interval, offset)
+                rc, msg = comm.plugn_start(plugn, interval, offset)
                 if rc:
-                    print(f'Error {rc} starting {plugin["name"]} on {smplr} \n'\
+                    print(f'Error {rc} starting {plugn} on {smplr} \n'\
                           f'Error: {msg}')
                     continue
     return True
@@ -866,6 +866,8 @@ def stop_samplers(comms, samplers, daemons):
                 print(f'stop_samplers: lost connectivity to {smplr} err {err}: {res}')
                 return False
             smplrs = comm.smplr_status()
+            from IPython.core.debugger import set_trace
+            set_trace()
             for plugn in smplrs[1]:
                 rc, msg = comm.plugn_stop(plugn['name'])
                 if rc:
@@ -1137,16 +1139,16 @@ def add_stores(comms, plugins, stores, aggregators, daemons, agg_state):
                 # Load and configure the plugin required by the store
                 plugin_name = store['plugin']
                 plugin = plugins[plugin_name]
-                store_args['plugin'] = plugin['name']
+                store_args['plugin'] = plugin_name
                 perm = check_opt('perm', store)
                 store_args['perm'] = perm
-                err, res = comm.plugn_load(plugin['name'])
+                err, res = comm.plugn_load(plugin_name, plugin['name'])
                 for cfg_ in plugin['config']:
                     if type(cfg_) is dict:
                         cfg_str = parse_to_cfg_str(cfg_)
                     else:
                         cfg_str = cfg_
-                    err, msg = comm.plugn_config(plugin['name'], cfg_str)
+                    err, msg = comm.plugn_config(plugin_name, cfg_str)
                     if err:
                         print(f'Error {err}: {msg}')
                     else:
