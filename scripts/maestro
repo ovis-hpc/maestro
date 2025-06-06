@@ -866,8 +866,6 @@ def stop_samplers(comms, samplers, daemons):
                 print(f'stop_samplers: lost connectivity to {smplr} err {err}: {res}')
                 return False
             smplrs = comm.smplr_status()
-            from IPython.core.debugger import set_trace
-            set_trace()
             for plugn in smplrs[1]:
                 rc, msg = comm.plugn_stop(plugn['name'])
                 if rc:
