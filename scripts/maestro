@@ -865,8 +865,12 @@ def stop_samplers(comms, samplers, daemons):
             if err:
                 print(f'stop_samplers: lost connectivity to {smplr} err {err}: {res}')
                 return False
-            smplrs = fmt_status(comm.smplr_status())
-            for plugn in smplrs[1]:
+            err, msg = comm.smplr_status()
+            if err:
+                print(f'Error getting sampler status: {msg}')
+                return False
+            smplrs = fmt_status(msg)
+            for plugn in smplrs:
                 rc, msg = comm.plugn_stop(plugn['name'])
                 if rc:
                     print(f'Error {rc} stopping {plugn["name"]} on {smplr} '
