@@ -857,7 +857,7 @@ def start_samplers(comms, plugins, samplers, daemons):
 def stop_samplers(comms, samplers, daemons):
     for smplr in daemons:
         for smplr_group in samplers:
-            if not bin_search(expand_names(smplr_group, smplr)):
+            if not bin_search(expand_names(smplr_group), smplr):
                 continue
             # Establish communicator to each ldmsd sampler
             comm = comms[smplr]
@@ -865,7 +865,7 @@ def stop_samplers(comms, samplers, daemons):
             if err:
                 print(f'stop_samplers: lost connectivity to {smplr} err {err}: {res}')
                 return False
-            smplrs = comm.smplr_status()
+            smplrs = fmt_status(comm.smplr_status())
             for plugn in smplrs[1]:
                 rc, msg = comm.plugn_stop(plugn['name'])
                 if rc:
@@ -876,7 +876,7 @@ def stop_samplers(comms, samplers, daemons):
                     print(f'Stopped {plugn["name"]} on {smplr}')
     return True
 
-def restart_samplers(comms, samplers, daemons):
+def restart_samplers(comms, plugins, samplers, daemons):
     # Stop all sampler plugins on samplers specified and restart them
     # Does not reconfigure samplers
     rc = stop_samplers(comms, samplers, daemons)
