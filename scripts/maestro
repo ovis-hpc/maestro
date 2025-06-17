@@ -248,7 +248,8 @@ class MaestroMonitor(object):
             for ep_name in self.daemons[dmn_name]['endpoints']:
                 ep = self.daemons[dmn_name]['endpoints'][ep_name]
                 hostname = self.daemons[dmn_name]['addr']
-                if 'maestro_comm' not in ep:
+                mc = check_opt('maestro_comm', ep)
+                if mc is False or mc == 'false' or mc == 'False':
                     listen.append(ep)
                     continue
                 conf = check_opt('conf', ep)
