@@ -167,7 +167,7 @@ daemons:
     endpoints :
       - names : &sampler-endpoints "node-[1-8]-[10002-10003]"
         ports : &sampler-ports "[10002-10003]"
-        maestro_comm : True
+        maestro_comm : True # If omitted, defaults to True
         xprt  : sock
         auth  :
            name : ovis1
