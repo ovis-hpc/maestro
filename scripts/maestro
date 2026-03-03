@@ -248,17 +248,17 @@ class MaestroMonitor(object):
             for ep_name in self.daemons[dmn_name]['endpoints']:
                 ep = self.daemons[dmn_name]['endpoints'][ep_name]
                 hostname = self.daemons[dmn_name]['addr']
+                auth_name, plugin, auth_opt = check_auth(ep)
                 mc = check_opt('maestro_comm', ep)
                 if mc is False or mc == 'false' or mc == 'False':
                     listen.append(ep)
                     continue
-                conf = check_opt('conf', ep)
                 try:
                     comm = Communicator(ep['xprt'],
                                         hostname,
                                         ep['port'],
-                                        ep['auth']['plugin'],
-                                        { 'conf' : conf })
+                                        auth_name,
+                                        { 'conf' : auth_opt })
                 except Exception as e:
                     print(f'Error initializing transport to ldmsd {dmn_name} at endpoint {ep_name} '\
                           f'on port {ep["port"]} with transport {ep["xprt"]}')
@@ -268,8 +268,19 @@ class MaestroMonitor(object):
                 if rc:
                     print(f'Error: {rc}')
                     print(f'Failed to communicate with LDMSD {dmn_name} on endpoint {ep["name"]}')
+                if 'msg_enable' in self.daemons[dmn_name]:
+                    rc, err = comm.msg_enable()
+                    if rc:
+                        print(f'Error {rc}: {err}')
+                if 'stream_enable' in self.daemons[dmn_name]:
+                    rc, err = comm.stream_enable()
+                    if rc:
+                        print(f'Error {rc}: {err}')
                 comms[dmn_name] = comm
                 add_listeners(comm, dmn_name, listen)
+        if len(comms) < 1:
+            raise ValueError(f'Error ENOENT: No daemons have been configured with "maestro_comm : True" '\
+                             f'in their endpoint dict to be configured by maestro.\n')
         return comms
 
     def check_aggs(self, group, agg_state):
@@ -619,7 +630,7 @@ class MaestroMonitor(object):
         add_stores(self.comms, self.plugins, self.stores, self.aggregators, self.daemons, agg_state)
         # Start the producers assigned to each of the Aggregators
         start_producers(self.comms, self.aggregators, agg_state)
-        stream_subscribe(self.comms, self.producers, self.aggregators, self.daemons, agg_state)
+        subscribe(self.comms, self.producers, self.aggregators, self.daemons, agg_state)
         time.sleep(3)
         self.set_cfg_cntr()
         return 0
@@ -1145,17 +1156,18 @@ def add_stores(comms, plugins, stores, aggregators, daemons, agg_state):
                 store_args['plugin'] = plugin_name
                 perm = check_opt('perm', store)
                 store_args['perm'] = perm
-                err, res = comm.plugn_load(plugin_name, plugin['name'])
-                for cfg_ in plugin['config']:
-                    if type(cfg_) is dict:
-                        cfg_str = parse_to_cfg_str(cfg_)
-                    else:
-                        cfg_str = cfg_
-                    err, msg = comm.plugn_config(plugin_name, cfg_str)
-                    if err:
-                        print(f'Error {err}: {msg}')
-                    else:
-                        loaded_plugins.append(plugin_name)
+                if plugin_name not in loaded_plugins:
+                    err, res = comm.plugn_load(plugin_name, plugin['name'])
+                    for cfg_ in plugin['config']:
+                        if type(cfg_) is dict:
+                            cfg_str = parse_to_cfg_str(cfg_)
+                        else:
+                            cfg_str = cfg_
+                        err, msg = comm.plugn_config(plugin_name, cfg_str)
+                        if err:
+                            print(f'Error {err}: {msg}')
+                        else:
+                            loaded_plugins.append(plugin_name)
 
                 flush = check_opt('flush', store)
                 ## the stores may already exist, in which case the add will fail
@@ -1211,9 +1223,9 @@ def start_producers(comms, aggregators, agg_state):
                 if err:
                     print(f'Error {err}: Error starting producer {prod_name} on agg {agg}: {res}')
 
-def stream_subscribe(comms, producers, aggregators, daemons, agg_state):
+def subscribe(comms, producers, aggregators, daemons, agg_state):
     """
-    Subscribe to streams.
+    Subscribe to streams or message_channel.
     """
     for grp_name in producers:
         grp_prods = set([ prod for prod in producers[grp_name]])
@@ -1228,20 +1240,29 @@ def stream_subscribe(comms, producers, aggregators, daemons, agg_state):
             comm = comms[agg_name]
             err, res = comm.prdcr_status()
             if err:
-                print(f'stream_subscribe: lost connectivity to {agg_name} err {err}: {res}')
+                print(f'prdcr_subscribe: lost connectivity to {agg_name} err {err}: {res}')
                 return False
 
-            for stream in subscribe:
-                if 'regex' in stream:
-                    regex = stream['regex']
+            for sub in subscribe:
+                if 'regex' in sub:
+                    regex = sub['regex']
                 else:
                     regex = '.*'
-                rx_rate = check_opt('rx_rate', stream)
+                rx_rate = check_opt('rx_rate', sub)
                 if not rx_rate:
                     rx_rate = '-1'
-                rc, err = comm.prdcr_subscribe(regex, stream['stream'], rx_rate)
-                if rc:
-                    print(f'Error {rc} subscribing to stream {stream["stream"]}: {err}.')
+                regex = check_opt('regex', sub)
+                stream = check_opt('stream', sub)
+                message_channel = check_opt('message_channel', sub)
+                message_tag = check_opt('message_tag', sub)
+                if stream:
+                    rc, err = comm.prdcr_subscribe(regex, stream=stream, rx_rate=rx_rate)
+                    if rc:
+                        print(f'Error {rc} subscribing to {sub["stream"]}: {err}.')
+                if message_tag:
+                    rc, err = comm.prdcr_subscribe(regex, msg_tag=message_tag, rx_rate=rx_rate)
+                    if rc:
+                        print(f'Error {rc} subscribing to {sub["message_tag"]}: {err}.')
 
 RAFT_STATE_TBL = {
         0: "FOLLOWER",
