@@ -307,6 +307,8 @@ class MaestroMonitor(object):
         for dmn_grp in self.samplers:
             cfg_smplrs = {}
             for sampler in expand_names(dmn_grp):
+                if 'maestro_comm' not in self.daemons[sampler]:
+                    continue
                 if self.comms[sampler].state == 3:
                     print(f'Unable to connect to ldms daemon {sampler}')
                     continue

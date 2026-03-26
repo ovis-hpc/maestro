@@ -110,6 +110,12 @@ Maestro consumes configuration files in YAML format.
 
 Here's an example of an _etcd_ cluster configuration:
 
+NOTE: etcd will not store values that are listed as None, null, or 0. If you
+would like to ensure these values are stored to the etcd database, you can
+represent them as strings.
+
+e.g. "key" : "0"
+
 ```yaml
 cluster: voltrino
 members:
