@@ -136,7 +136,7 @@ if __name__ == "__main__":
         import sys
         sys.tracebacklimit=0
     config_fp = open(args.ldms_config)
-    conf_spec = yaml.safe_load(config_fp)
+    conf_spec = yaml.load(config_fp, Loader=yaml.BaseLoader)
 
     if args.cluster:
         # All keys in the DB are prefixed with the prefix name. So we can
