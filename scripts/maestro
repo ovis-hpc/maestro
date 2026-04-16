@@ -257,7 +257,7 @@ class MaestroMonitor(object):
                     comm = Communicator(ep['xprt'],
                                         hostname,
                                         ep['port'],
-                                        auth_name,
+                                        plugin,
                                         { 'conf' : auth_opt })
                 except Exception as e:
                     log.error(f'Error initializing transport to ldmsd {dmn_name} at endpoint {ep_name} '\
@@ -307,7 +307,7 @@ class MaestroMonitor(object):
         for dmn_grp in self.samplers:
             cfg_smplrs = {}
             for sampler in expand_names(dmn_grp):
-                if 'maestro_comm' not in self.daemons[sampler]:
+                if sampler not in self.comms:
                     continue
                 if self.comms[sampler].state == 3:
                     log.info('Unable to connect to ldms daemon %s', sampler)
@@ -1141,15 +1141,17 @@ def add_stores(comms, plugins, stores, aggregators, daemons, agg_state):
     """
     Add stores to Aggregators
     """
+    loaded_plugins = {}
     for grp_name in stores:
         grp_stores = stores[grp_name]
         for store_name in grp_stores:
             # This will be used when multi-instance plugins are introduced
-            loaded_plugins = []
             store = grp_stores[store_name]
             for agg_name, agg_host in agg_hosts(grp_name, aggregators, daemons):
                 if agg_state[grp_name][agg_name] != 'ready' or agg_name not in comms:
                     continue
+                if agg_name not in loaded_plugins:
+                    loaded_plugins[agg_name] = []
                 comm = comms[agg_name]
                 store_args = fmt_cmd_args(comm, 'strgp_add', store)
                 # Load and configure the plugin required by the store
@@ -1158,7 +1160,7 @@ def add_stores(comms, plugins, stores, aggregators, daemons, agg_state):
                 store_args['plugin'] = plugin_name
                 perm = check_opt('perm', store)
                 store_args['perm'] = perm
-                if plugin_name not in loaded_plugins:
+                if plugin_name not in loaded_plugins[agg_name]:
                     err, res = comm.plugn_load(plugin_name, plugin['name'])
                     for cfg_ in plugin['config']:
                         if type(cfg_) is dict:
@@ -1170,7 +1172,7 @@ def add_stores(comms, plugins, stores, aggregators, daemons, agg_state):
                             log.error('Error %d: %s WITH %s', err, msg, cfg_str)
                         else:
                             log.debug('Config %s with %s', plugin_name, cfg_str)
-                            loaded_plugins.append(plugin_name)
+                            loaded_plugins[agg_name].append(plugin_name)
 
                 flush = check_opt('flush', store)
                 ## the stores may already exist, in which case the add will fail
