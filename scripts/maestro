@@ -781,7 +781,7 @@ class MaestroMonitor(object):
                 rc = self.rebalance(self.ldmsd_state)
                 log.info('Finished load balancing.')
             self.lock.release()
-            time.sleep(self.args.timeout)
+            time.sleep(self.args.loop_timeout)
 
 def config_samplers(comms, plugins, samplers, cfg_smplrs):
     """Configure and load plugins for sampler daemons"""
@@ -1293,6 +1293,11 @@ if __name__ == "__main__":
     parser.add_argument("--start-aggregators", action='store_true',
                         help="Start ldms aggregator daemon's")
     parser.add_argument("--timeout", metavar="INT", required=False, type=int,
+                        help="The connection timeout for individual LDMS daemons",
+                        default=15)
+    parser.add_argument("--loop_timeout", metavar="INT", required=False, type=int,
+                        help="The timeout on each completion of each iteration of querying "\
+                        "the status of the entire LDMS cluster before querying again.\n",
                         default=15)
     parser.add_argument("--version", metavar="VERSION",
                         help="The OVIS version for the output syntax (4 or 5), default is 4",
