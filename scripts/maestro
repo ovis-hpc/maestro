@@ -9,6 +9,7 @@ import json
 import threading, queue
 import time
 import re
+import signal
 import socket
 import logging
 import copy
@@ -1346,6 +1347,7 @@ def finalize_json(benchmark=False):
     fp.seek(pos - 2)
     fp.write(b"]}")
     fp.truncate()
+    sys.exit(0)
 
 RAFT_STATE_TBL = {
         0: "FOLLOWER",
@@ -1355,6 +1357,8 @@ RAFT_STATE_TBL = {
 
 def raft_state_str(state):
     return RAFT_STATE_TBL.get(state, f"UNKNOWN_STATE({state})")
+
+signal.signal(signal.SIGTERM, finalize_json)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -1385,7 +1389,8 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action='store_true',
                         help="Enable debug information")
     parser.add_argument("--benchmark", default=None,
-                        help="Path to a file with benchmark data in json format")
+                        help="Path to a file to store maestro benchmarking data "\
+                             "in json format")
     parser.set_defaults(debug=False)
     args = parser.parse_args()
     if not args.debug:
@@ -1420,7 +1425,7 @@ if __name__ == "__main__":
         maestro = MaestroMonitor(etcd_spec, args)
     else:
         maestro = BenchmarkMonitor(etcd_spec, args)
-        b_log = open(f'{args.benchmark}/benchmark.json', 'w')
+        b_log = open(f'{args.benchmark}', 'w')
 
     # At each load-balance group level the aggregators have all
     # producers; however, only the producers assigned to each
