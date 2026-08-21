@@ -17,6 +17,8 @@ from ldmsd.ldmsd_communicator import Communicator, fmt_status
 from ldmsd.parser_util import *
 from maestro.maestro_util import *
 
+BENCHMARK = False
+
 def agg_hosts(grp_name, aggs, daemons):
     return [ [ dmn, daemons[dmn]['endpoints'][ep]] for dmn in aggs[grp_name] for ep in daemons[dmn]['endpoints'] if 'maestro_comm' in daemons[dmn]['endpoints'][ep] ]
 
@@ -1337,11 +1339,11 @@ def subscribe(comms, producers, aggregators, daemons, agg_state):
                     if rc:
                         log.error('Error %d subscribing to %s: %s.', rc, sub["message_tag"],err)
 
-def finalize_json(benchmark=False):
-    if not benchmark:
+def finalize_json():
+    if not BENCHMARK:
         return
     b_log.close()
-    fp = open(f'{args.benchmark}/benchmark.json', 'rb+')
+    fp = open(f'{BENCHMARK}', 'rb+')
     fp.seek(0, os.SEEK_END)
     pos = fp.tell()
     fp.seek(pos - 2)
@@ -1378,7 +1380,7 @@ if __name__ == "__main__":
                         help="The connection timeout for individual LDMS daemons",
                         default=15)
     parser.add_argument("--loop_timeout", metavar="INT", required=False, type=int,
-                        help="The timeout on each completion of each iteration of querying "\
+                        help="The timeout (seconds) on each completion of each iteration of querying "\
                         "the status of the entire LDMS cluster before querying again.\n",
                         default=15)
     parser.add_argument("--version", metavar="VERSION",
@@ -1386,6 +1388,8 @@ if __name__ == "__main__":
                         default=4)
     parser.add_argument("--log-level", default="info",
                         help="Log level (debug, info, warn, error, fatal)")
+    parser.add_argument("-l", "--log_file", default=None,
+                        help="Path to log file (default stdout)")
     parser.add_argument("--debug", action='store_true',
                         help="Enable debug information")
     parser.add_argument("--benchmark", default=None,
@@ -1406,10 +1410,16 @@ if __name__ == "__main__":
                 CRITICAL = logging.CRITICAL, # alias of FATAL
             )
     log_level = LOG_LEVEL_TBL.get( args.log_level.upper(), 0 )
-    logging.basicConfig(
-            format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s %(message)s',
-            datefmt='%F %T',
-            )
+    if args.log_file:
+        logging.basicConfig(
+                filename=args.log_file,
+                format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s %(message)s',
+                datefmt='%F %T')
+    else:
+        logging.basicConfig(
+                format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s %(message)s',
+                datefmt='%F %T')
+
     log = logging.getLogger(__name__)
     log.setLevel(log_level)
 
@@ -1424,8 +1434,9 @@ if __name__ == "__main__":
     if not args.benchmark:
         maestro = MaestroMonitor(etcd_spec, args)
     else:
+        BENCHMARK = args.benchmark
         maestro = BenchmarkMonitor(etcd_spec, args)
-        b_log = open(f'{args.benchmark}', 'w')
+        b_log = open(f'{BENCHMARK}', 'w')
 
     # At each load-balance group level the aggregators have all
     # producers; however, only the producers assigned to each
@@ -1437,7 +1448,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         log.info('Exit requested. Exiting...')
     finally:
-        finalize_json(args.benchmark)
+        finalize_json()
     # evq = queue.Queue()
     # mthread = threading.Thread(target=cluster_monitor)
     # mthread.start()
