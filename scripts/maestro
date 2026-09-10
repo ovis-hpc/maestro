@@ -704,9 +704,7 @@ class MaestroMonitor(object):
         for dmn_grp in self.cluster_aggs:
             if dmn_grp not in self.aggregators:
                 continue
-            for dmn in list(self.daemons[dmn_grp]):
-                if dmn not in self.aggregators[dmn_grp]:
-                    continue
+            for dmn in expand_names(dmn_grp):
                 if self.ldmsd_mi_state[dmn_grp][dmn] != self.ldmsd_state[dmn_grp][dmn]:
                     self.ldmsd_mi_state.setDaemon(dmn_grp, dmn, self.ldmsd_state[dmn_grp][dmn], sync=True)
         self.raftLock.release('agg_state')
@@ -899,10 +897,10 @@ def config_samplers(comms, plugins, samplers, cfg_smplrs):
 def start_agg_daemons(aggregators, start_aggs):
     if start_aggs:
         for dmn_grp in aggregators:
-            for dmn_name in self.daemons[dmn_grp]:
+            for dmn_name in expand_names(dmn_grp):
                 listen = []
-                for ep_name in self.daemons[dmn_grp][dmn_name]['endpoints']:
-                    ep = self.daemons[dmn_grp][dmn_name]['endpoints'][ep_name]
+                for ep_name in self.daemons[dmn_name]['endpoints']:
+                    ep = self.daemons[dmn_name]['endpoints'][ep_name]
                     if 'maestro_comm' not in ep:
                         listen.append(ep)
                         continue
