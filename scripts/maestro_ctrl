@@ -10,9 +10,14 @@ from ldmsd.parser_util import *
 from maestro.maestro_util import *
 
 class MaestroCtrl(YamlCfg):
+    def __init__(self, cluster_config, args, name, client):
+        super().__init__(cluster_config, args)
+        self.name = name
+        self.client = client
+
     def emit_value(self, path, value):
         try:
-            res = client.put(path, str(value))
+            res = self.client.put(path, str(value))
         except Exception as e:
             print("Error {0} setting {1} : {2}".format(str(e), path, str(value)))
 
@@ -161,7 +166,7 @@ if __name__ == "__main__":
         client = None
         args.prefix = None
 
-    cluster = MaestroCtrl(client, args.prefix, conf_spec, args)
+    cluster = MaestroCtrl(conf_spec, args, args.prefix, client)
 
     if args.daemon_name:
         ldmsd_cfg_str = cluster.daemon_config(args.ldms_config, args.daemon_name)
